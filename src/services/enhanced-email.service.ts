@@ -140,7 +140,8 @@ class EnhancedEmailService {
         .replace('{{ORDER_DATE}}', new Date(orderData.created_at).toLocaleDateString())
         .replace('{{TOTAL_AMOUNT}}', `GHS ${orderData.total.toFixed(2)}`)
         .replace('{{DELIVERY_ADDRESS}}', this.formatAddress(orderData.delivery_address))
-        .replace('{{ITEMS_LIST}}', this.formatOrderItems(orderData.items));
+        .replace('{{ITEMS_LIST}}', this.formatOrderItems(orderData.items))
+        .replace('{{ORDER_NOTES}}', orderData.notes ? `<div style="background-color: #f9f9f9; border-radius: 8px; padding: 15px; margin: 20px 0;"><h3 style="color: #1A1A1A; font-size: 16px; margin: 0 0 10px 0;">Order Notes:</h3><p style="color: #3A3A3A; font-size: 14px; margin: 0;">${orderData.notes}</p></div>` : '');
 
       const success = await this.sendEmail({
         to: orderData.customer_email,
@@ -324,6 +325,7 @@ class EnhancedEmailService {
                   <p><strong>Email:</strong> {{CUSTOMER_EMAIL}}</p>
                   <p><strong>Date:</strong> {{ORDER_DATE}}</p>
                   <p><strong>Total:</strong> GHS {{TOTAL_AMOUNT}}</p>
+                  {{ORDER_NOTES}}
                 </div>
                 <h3>Order Items:</h3>
                 {{ITEMS_LIST}}
@@ -347,7 +349,8 @@ class EnhancedEmailService {
         .replace(/{{ORDER_DATE}}/g, new Date(orderData.created_at).toLocaleString())
         .replace(/{{TOTAL_AMOUNT}}/g, orderData.total.toFixed(2))
         .replace(/{{DELIVERY_ADDRESS}}/g, this.formatAddress(orderData.delivery_address))
-        .replace(/{{ITEMS_LIST}}/g, this.formatOrderItems(orderData.items || []));
+        .replace(/{{ITEMS_LIST}}/g, this.formatOrderItems(orderData.items || []))
+        .replace(/{{ORDER_NOTES}}/g, orderData.notes ? `<div style="background-color: #f9f9f9; border-radius: 8px; padding: 15px; margin: 20px 0;"><h3 style="color: #1A1A1A; font-size: 16px; margin: 0 0 10px 0;">Order Notes:</h3><p style="color: #3A3A3A; font-size: 14px; margin: 0;">${orderData.notes}</p></div>` : '');
 
       const success = await this.sendEmail({
         to: 'ventechgadget@gmail.com',

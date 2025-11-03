@@ -2,6 +2,7 @@ import express, { Application } from 'express';
 import cors from 'cors';
 import productRoutes from './routes/product.routes';
 import orderRoutes from './routes/order.routes';
+import paymentRoutes from './routes/payment.routes';
 import bannerRoutes from './routes/banner.routes';
 import investmentRoutes from './routes/investment.routes';
 import uploadRoutes from './routes/upload.routes';
@@ -11,8 +12,21 @@ import { errorHandler, notFound } from './middleware/error.middleware';
 const app: Application = express();
 
 // Middleware
+const allowedOrigins = process.env.FRONTEND_URL 
+  ? process.env.FRONTEND_URL.split(',').map(url => url.trim())
+  : ['http://localhost:3000', 'http://127.0.0.1:3000'];
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(null, true); // Allow all origins in development
+    }
+  },
   credentials: true,
 }));
 app.use(express.json());
@@ -26,6 +40,7 @@ app.get('/health', (req, res) => {
 // API Routes
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/payments', paymentRoutes);
 app.use('/api/banners', bannerRoutes);
 app.use('/api/investment', investmentRoutes);
 app.use('/api/upload', uploadRoutes);

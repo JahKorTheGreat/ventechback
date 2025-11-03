@@ -198,10 +198,13 @@ export class OrderController {
         discount,
         tax,
         delivery_fee,
+        delivery_option,
         total,
         payment_method,
         delivery_address,
         order_items,
+        notes,
+        payment_reference,
       } = req.body;
 
       // Create order
@@ -218,8 +221,10 @@ export class OrderController {
           payment_method,
           delivery_address,
           delivery_option: delivery_option || { name: 'Standard', price: delivery_fee || 0 },
+          notes: notes || null,
+          payment_reference: payment_reference || null,
           status: 'pending',
-          payment_status: 'pending',
+          payment_status: payment_method === 'cash_on_delivery' ? 'pending' : 'pending', // Will be updated when payment verified
         }])
         .select()
         .single();
@@ -244,6 +249,23 @@ export class OrderController {
 
       if (itemsError) throw itemsError;
 
+      // Link transaction to order if payment_reference exists
+      if (orderData.payment_reference) {
+        try {
+          await supabaseAdmin
+            .from('transactions')
+            .update({
+              order_id: orderData.id,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('transaction_reference', orderData.payment_reference)
+            .or(`paystack_reference.eq.${orderData.payment_reference}`);
+        } catch (linkError) {
+          console.error('Error linking transaction to order:', linkError);
+          // Don't fail order creation if transaction linking fails
+        }
+      }
+
       // Get user data for email (if logged in)
       let userData: any = null;
       if (user_id) {
@@ -267,6 +289,7 @@ export class OrderController {
             customer_name: customerName,
             customer_email: userData.email,
             items: orderItems,
+            notes: orderData.notes || null,
           };
 
           const emailResult = await enhancedEmailService.sendOrderConfirmation(emailData);
@@ -292,6 +315,7 @@ export class OrderController {
               customer_name: customerName,
               customer_email: guestEmail,
               items: orderItems,
+              notes: orderData.notes || null,
             };
 
             const emailResult = await enhancedEmailService.sendOrderConfirmation(emailData);
@@ -312,6 +336,7 @@ export class OrderController {
           customer_name: userData?.full_name || delivery_address?.full_name || 'Guest Customer',
           customer_email: userData?.email || (delivery_address as any)?.email || 'No email',
           items: orderItems,
+          notes: orderData.notes || null,
         };
 
         await enhancedEmailService.sendAdminOrderNotification(emailData);

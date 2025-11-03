@@ -23,6 +23,7 @@
     "@supabase/supabase-js": "^2.47.13",
     "@types/multer": "^2.0.0",
     "@types/nodemailer": "^7.0.3",
+    "axios": "^1.13.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
