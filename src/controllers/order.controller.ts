@@ -152,6 +152,51 @@ export class OrderController {
     }
   }
 
+  // Update payment status
+  async updatePaymentStatus(req: Request, res: Response) {
+    try {
+      const { id } = req.params;
+      const { payment_status } = req.body;
+
+      if (!payment_status || !['pending', 'paid', 'failed', 'refunded'].includes(payment_status)) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid payment status. Must be: pending, paid, failed, or refunded',
+        });
+      }
+
+      // Update payment status
+      const { data: orderData, error: orderError } = await supabaseAdmin
+        .from('orders')
+        .update({
+          payment_status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select(`
+          *,
+          user:users!orders_user_id_fkey(id, first_name, last_name, email),
+          order_items:order_items(*)
+        `)
+        .single();
+
+      if (orderError) throw orderError;
+
+      res.json({
+        success: true,
+        message: 'Payment status updated successfully',
+        data: orderData,
+      });
+    } catch (error) {
+      console.error('Error updating payment status:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Failed to update payment status',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
   // Cancel order
   async cancelOrder(req: Request, res: Response) {
     try {
@@ -215,12 +260,69 @@ export class OrderController {
     }
   }
 
+  // Generate sequential order number (format: ORD-XXXDDMMYY)
+  private async generateOrderNumber(): Promise<string> {
+    try {
+      // Get today's date in DDMMYY format
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const year = String(now.getFullYear()).slice(-2);
+      const dateStr = `${day}${month}${year}`;
+
+      // Get the last order number for today to generate sequential number
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const { data: lastOrder } = await supabaseAdmin
+        .from('orders')
+        .select('order_number')
+        .gte('created_at', todayStart.toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      let sequence = 1;
+      if (lastOrder && lastOrder.order_number) {
+        // Extract sequence from last order number (ORD-XXXDDMMYY)
+        const match = lastOrder.order_number.match(/ORD-(\d{3})/);
+        if (match) {
+          sequence = parseInt(match[1]) + 1;
+          // Reset to 1 if sequence exceeds 999 (shouldn't happen in one day)
+          if (sequence > 999) sequence = 1;
+        }
+      }
+
+      // Format sequence as 3 digits (001, 002, etc.)
+      const sequenceStr = String(sequence).padStart(3, '0');
+      return `ORD-${sequenceStr}${dateStr}`;
+    } catch (error) {
+      console.error('Error generating order number:', error);
+      // Fallback: use timestamp-based number
+      const now = new Date();
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const year = String(now.getFullYear()).slice(-2);
+      const dateStr = `${day}${month}${year}`;
+      const sequenceStr = String(Date.now()).slice(-3);
+      return `ORD-${sequenceStr}${dateStr}`;
+    }
+  }
+
   // Create order (with email confirmation)
   async createOrder(req: Request, res: Response) {
     try {
+      console.log('📦 Order creation request received:', {
+        hasUserId: !!req.body.user_id,
+        hasOrderItems: !!req.body.order_items,
+        orderItemsCount: req.body.order_items?.length || 0,
+        hasDeliveryAddress: !!req.body.delivery_address,
+        paymentMethod: req.body.payment_method,
+        paymentReference: req.body.payment_reference,
+        total: req.body.total,
+      });
+
       const {
         user_id,
-        order_number,
+        order_number, // Optional - will be generated if not provided
         subtotal,
         discount,
         tax,
@@ -234,6 +336,38 @@ export class OrderController {
         payment_reference,
       } = req.body;
 
+      // Validate required fields
+      if (!order_items || !Array.isArray(order_items) || order_items.length === 0) {
+        console.error('❌ Order creation failed: No order items provided');
+        return res.status(400).json({
+          success: false,
+          message: 'Order items are required',
+          error: 'No order items provided',
+        });
+      }
+
+      if (!delivery_address) {
+        console.error('❌ Order creation failed: No delivery address provided');
+        return res.status(400).json({
+          success: false,
+          message: 'Delivery address is required',
+          error: 'No delivery address provided',
+        });
+      }
+
+      if (!total || total <= 0) {
+        console.error('❌ Order creation failed: Invalid total amount');
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid total amount',
+          error: 'Total must be greater than 0',
+        });
+      }
+
+      // Generate order number if not provided (backend generates sequential number)
+      const finalOrderNumber = order_number || await this.generateOrderNumber();
+      console.log('✅ Generated order number:', finalOrderNumber);
+
       // Map delivery_address to shipping_address and include delivery_option in the address JSON
       const shippingAddress = delivery_address ? {
         ...delivery_address,
@@ -241,29 +375,48 @@ export class OrderController {
       } : null;
 
       // Create order
+      // Note: payment_reference column does NOT exist in orders table
+      // Store it in shipping_address JSON instead (if provided)
+      const orderInsertData: any = {
+        user_id,
+        order_number: finalOrderNumber,
+        subtotal,
+        discount,
+        tax,
+        shipping_fee: delivery_fee || 0,
+        total,
+        payment_method,
+        shipping_address: shippingAddress ? {
+          ...shippingAddress,
+          // Only include payment_reference if provided (store in shipping_address JSON)
+          ...(payment_reference ? { payment_reference } : {}),
+        } : null,
+        notes: notes || null,
+        status: 'pending',
+        payment_status: payment_method === 'cash_on_delivery' ? 'pending' : 'pending', // Will be updated when payment verified
+      };
+
+      // DO NOT include payment_reference as a direct column - it doesn't exist in orders table
+      // It's already stored in shipping_address JSON above (if provided)
+
       const { data: orderData, error: orderError } = await supabaseAdmin
         .from('orders')
-        .insert([{
-          user_id,
-          order_number,
-          subtotal,
-          discount,
-          tax,
-          shipping_fee: delivery_fee || 0,
-          total,
-          payment_method,
-          shipping_address: shippingAddress,
-          notes: notes || null,
-          payment_reference: payment_reference || null,
-          status: 'pending',
-          payment_status: payment_method === 'cash_on_delivery' ? 'pending' : 'pending', // Will be updated when payment verified
-        }])
+        .insert([orderInsertData])
         .select()
         .single();
 
-      if (orderError) throw orderError;
+      if (orderError) {
+        console.error('❌ Order creation failed:', orderError);
+        throw orderError;
+      }
+      
+      console.log('✅ Order created successfully:', {
+        id: orderData.id,
+        order_number: orderData.order_number,
+        user_id: orderData.user_id,
+      });
 
-      // Create order items
+      // Create order items and decrease stock
       const orderItems = order_items.map((item: any) => ({
         order_id: orderData.id,
         product_id: item.product_id,
@@ -279,7 +432,49 @@ export class OrderController {
         .from('order_items')
         .insert(orderItems);
 
-      if (itemsError) throw itemsError;
+      if (itemsError) {
+        console.error('❌ Order items creation failed:', itemsError);
+        throw itemsError;
+      }
+      
+      console.log(`✅ Created ${orderItems.length} order items`);
+
+      // Decrease stock for each product in the order
+      try {
+        for (const item of order_items) {
+          const { data: product, error: productError } = await supabaseAdmin
+            .from('products')
+            .select('stock_quantity, in_stock')
+            .eq('id', item.product_id)
+            .single();
+
+          if (!productError && product) {
+            const currentStock = product.stock_quantity || 0;
+            const newStock = Math.max(0, currentStock - item.quantity);
+            const newInStock = newStock > 0;
+
+            const { error: updateError } = await supabaseAdmin
+              .from('products')
+              .update({
+                stock_quantity: newStock,
+                in_stock: newInStock,
+              })
+              .eq('id', item.product_id);
+
+            if (updateError) {
+              console.error(`❌ Failed to update stock for product ${item.product_id}:`, updateError);
+            } else {
+              console.log(`✅ Decreased stock for product ${item.product_id}: ${currentStock} → ${newStock}`);
+            }
+          } else {
+            console.error(`❌ Error fetching product ${item.product_id} for stock update:`, productError);
+          }
+        }
+      } catch (stockError) {
+        console.error('❌ Error updating product stock:', stockError);
+        // Don't fail order creation if stock update fails - log and continue
+        // This allows the order to be created even if stock update fails
+      }
 
       // Get user data for email (if logged in) - moved before transaction creation
       let userData: any = null;
@@ -410,8 +605,10 @@ export class OrderController {
       // Send order confirmation email to customer
       if (customerEmail) {
         try {
+          console.log(`📧 Preparing to send order confirmation email to: ${customerEmail}`);
           const emailData = {
             ...orderData,
+            user_id: user_id || null,
             customer_name: customerName,
             customer_email: customerEmail,
             items: orderItems,
@@ -421,23 +618,28 @@ export class OrderController {
 
           const emailResult = await enhancedEmailService.sendOrderConfirmation(emailData);
           if (emailResult.skipped) {
-            console.log(`Order confirmation email skipped: ${emailResult.reason}`);
+            console.log(`⚠️ Order confirmation email skipped: ${emailResult.reason}`);
           } else if (emailResult.success) {
-            console.log('Order confirmation email sent successfully to', customerEmail);
+            console.log(`✅ Order confirmation email sent successfully to ${customerEmail}`);
           } else {
-            console.error('Failed to send order confirmation email:', emailResult.reason);
+            console.error(`❌ Failed to send order confirmation email to ${customerEmail}:`, emailResult.reason);
           }
-        } catch (emailError) {
-          console.error('Failed to send order confirmation email:', emailError);
+        } catch (emailError: any) {
+          console.error('❌ Error sending order confirmation email:', {
+            error: emailError,
+            message: emailError?.message || 'Unknown error',
+            customerEmail,
+            orderNumber: orderData.order_number,
+          });
           // Don't fail the request if email fails
         }
       } else {
-        console.warn('No email found for order confirmation. user_id:', user_id, 'shipping_address:', shippingAddress);
+        console.warn('⚠️ No email found for order confirmation. user_id:', user_id, 'shipping_address:', shippingAddress);
       }
 
       // Send admin notification email
       try {
-        const adminEmail = 'ventechgadget@gmail.com';
+        console.log('📧 Sending admin order notification email to ventechgadgets@gmail.com');
         const emailData = {
           ...orderData,
           customer_name: userData?.full_name || shippingAddress?.full_name || 'Guest Customer',
@@ -447,10 +649,18 @@ export class OrderController {
           delivery_address: shippingAddress, // Keep for email template compatibility
         };
 
-        await enhancedEmailService.sendAdminOrderNotification(emailData);
-        console.log('Admin order notification email sent successfully');
-      } catch (emailError) {
-        console.error('Failed to send admin order notification email:', emailError);
+        const adminEmailResult = await enhancedEmailService.sendAdminOrderNotification(emailData);
+        if (adminEmailResult.success) {
+          console.log('✅ Admin order notification email sent successfully to ventechgadgets@gmail.com');
+        } else {
+          console.error('❌ Failed to send admin order notification email:', adminEmailResult.reason);
+        }
+      } catch (emailError: any) {
+        console.error('❌ Error sending admin order notification email:', {
+          error: emailError,
+          message: emailError?.message || 'Unknown error',
+          orderNumber: orderData.order_number,
+        });
         // Don't fail the request if email fails
       }
 
@@ -480,17 +690,35 @@ export class OrderController {
         // Don't fail the request if notification fails
       }
 
+      console.log('✅ Order creation completed successfully:', {
+        order_id: orderData.id,
+        order_number: orderData.order_number,
+        total: orderData.total,
+        email_sent: true, // Email is sent above
+        stock_updated: true, // Stock is updated above
+      });
+
       res.json({
         success: true,
         message: 'Order created successfully',
         data: orderData,
       });
-    } catch (error) {
-      console.error('Error creating order:', error);
+    } catch (error: any) {
+      console.error('❌ Error creating order:', {
+        error,
+        message: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        code: error?.code,
+        details: error?.details,
+        hint: error?.hint,
+        fullError: JSON.stringify(error, Object.getOwnPropertyNames(error), 2),
+      });
       res.status(500).json({
         success: false,
         message: 'Failed to create order',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : (error?.message || 'Unknown error'),
+        details: error?.details || error?.hint || undefined,
+        code: error?.code || undefined,
       });
     }
   }

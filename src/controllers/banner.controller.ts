@@ -8,26 +8,60 @@ export const getBannersByType = async (req: Request, res: Response) => {
     const { type } = req.params;
     const currentDate = new Date().toISOString();
 
+    // Build query - banners table doesn't have a 'type' column
+    // Return all active banners (the 'type' parameter is ignored since column doesn't exist)
     let query = supabaseAdmin
       .from('banners')
       .select('*')
-      .eq('type', type)
-      .eq('active', true)
-      .or(`start_date.is.null,start_date.lte.${currentDate}`)
-      .or(`end_date.is.null,end_date.gte.${currentDate}`);
+      .eq('active', true);
+
+    // Try to add date filters if columns exist
+    try {
+      query = query.or(`start_date.is.null,start_date.lte.${currentDate}`);
+      query = query.or(`end_date.is.null,end_date.gte.${currentDate}`);
+    } catch (dateError: any) {
+      // Date columns might not exist, skip date filtering
+      if (dateError?.code !== '42703') {
+        console.warn('Date filtering skipped - columns may not exist');
+      }
+    }
 
     // Try to order by 'order' column (quoted because it's a reserved keyword)
     try {
       query = query.order('order', { ascending: true });
-    } catch (orderError) {
-      // If ordering fails, just get the data without ordering
-      console.warn('Could not order by "order" column, using unordered results');
+    } catch (orderError: any) {
+      // If ordering fails, try alternative column names
+      if (orderError?.code === '42703') {
+        // Column doesn't exist, try alternatives
+        try {
+          query = query.order('position', { ascending: true });
+        } catch (positionError: any) {
+          if (positionError?.code === '42703') {
+            try {
+              query = query.order('display_order', { ascending: true });
+            } catch (displayOrderError: any) {
+              if (displayOrderError?.code === '42703') {
+                try {
+                  query = query.order('sort_order', { ascending: true });
+                } catch (sortOrderError: any) {
+                  // If all ordering fails, just get the data without ordering
+                  console.warn('Could not order banners, using unordered results');
+                }
+              }
+            }
+          }
+        }
+      } else {
+        console.warn('Could not order banners:', orderError);
+      }
     }
 
     const { data, error } = await query;
 
     if (error) throw error;
 
+    // Return all active banners (no type column to filter by)
+    // The frontend can filter by type client-side if needed
     return successResponse(res, data || []);
   } catch (error: any) {
     console.error('Get banners error:', error);

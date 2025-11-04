@@ -200,15 +200,16 @@ export class PaymentController {
           // Don't fail the request if DB save fails
         }
 
+        // Return response with metadata for frontend to use
         return res.json({
           success: isSuccessful,
           data: {
             reference: transaction.reference,
-            status: transaction.status,
+            status: transaction.status, // 'success' if payment successful
             amount: verifiedAmount,
             currency: transaction.currency,
             customer: transaction.customer,
-            metadata: transaction.metadata,
+            metadata: transaction.metadata || {}, // Include metadata (checkout_data, user_id, etc.)
             paid_at: transaction.paid_at,
             created_at: transaction.created_at,
           },
@@ -225,6 +226,157 @@ export class PaymentController {
       return res.status(500).json({
         success: false,
         message: error.response?.data?.message || 'Failed to verify transaction',
+        error: error.message,
+      });
+    }
+  }
+
+  // Handle Paystack webhook (for automatic order creation after payment)
+  async handleWebhook(req: Request, res: Response) {
+    try {
+      const crypto = require('crypto');
+      const paystackSecretKey = process.env.PAYSTACK_SECRET_KEY;
+      
+      if (!paystackSecretKey) {
+        console.error('Paystack secret key not configured');
+        return res.status(500).json({
+          success: false,
+          message: 'Paystack secret key not configured',
+        });
+      }
+
+      // Verify webhook signature (Paystack sends X-Paystack-Signature header)
+      const signature = req.headers['x-paystack-signature'] as string;
+      if (!signature) {
+        console.error('Missing Paystack signature in webhook');
+        return res.status(400).json({
+          success: false,
+          message: 'Missing signature',
+        });
+      }
+
+      // Verify signature
+      const hash = crypto
+        .createHmac('sha512', paystackSecretKey)
+        .update(JSON.stringify(req.body))
+        .digest('hex');
+
+      if (hash !== signature) {
+        console.error('Invalid Paystack webhook signature');
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid signature',
+        });
+      }
+
+      const event = req.body;
+      console.log('🔔 Paystack webhook received:', {
+        event: event.event,
+        reference: event.data?.reference,
+        status: event.data?.status,
+      });
+
+      // Handle payment.success event
+      if (event.event === 'charge.success' || event.event === 'transaction.success') {
+        const transaction = event.data;
+        
+        if (transaction.status === 'success') {
+          console.log('✅ Payment successful, creating order from webhook...');
+          
+          // Get checkout data from metadata
+          const metadata = transaction.metadata || {};
+          const checkoutData = metadata.checkout_data;
+          
+          if (!checkoutData) {
+            console.error('❌ No checkout data in webhook metadata');
+            return res.status(400).json({
+              success: false,
+              message: 'No checkout data found in metadata',
+            });
+          }
+
+          // Import OrderController
+          const { OrderController } = await import('./order.controller');
+          const orderController = new OrderController();
+
+          // Create order using checkout data from metadata
+          try {
+            const userId = metadata.user_id && metadata.user_id !== 'guest' 
+              ? metadata.user_id 
+              : null;
+
+            // Calculate totals if not provided
+            const items = checkoutData.items || [];
+            const subtotal = checkoutData.subtotal || items.reduce((sum: number, item: any) => sum + (item.subtotal || (item.quantity * (item.discount_price || item.original_price || 0))), 0);
+            const deliveryFee = checkoutData.delivery_option?.price || checkoutData.delivery_fee || 0;
+            const tax = checkoutData.tax || 0;
+            const total = checkoutData.total || (subtotal + deliveryFee + tax);
+
+            // Prepare order items
+            const orderItems = items.map((item: any) => ({
+              product_id: item.id,
+              product_name: item.name,
+              product_image: item.thumbnail || item.image_url || '',
+              quantity: item.quantity,
+              unit_price: item.discount_price || item.original_price || 0,
+              subtotal: item.subtotal || (item.quantity * (item.discount_price || item.original_price || 0)),
+              selected_variants: item.selected_variants || {},
+            }));
+
+            console.log('📦 Creating order from webhook:', {
+              userId,
+              itemsCount: orderItems.length,
+              subtotal,
+              deliveryFee,
+              tax,
+              total,
+              hasDeliveryAddress: !!checkoutData.delivery_address,
+            });
+
+            // Prepare order creation request
+            const orderRequest = {
+              body: {
+                user_id: userId,
+                subtotal,
+                discount: checkoutData.discount || 0,
+                tax,
+                delivery_fee: deliveryFee,
+                delivery_option: checkoutData.delivery_option,
+                total,
+                payment_method: checkoutData.payment_method || 'paystack',
+                delivery_address: checkoutData.delivery_address,
+                order_items: orderItems,
+                notes: checkoutData.notes || null,
+                payment_reference: transaction.reference,
+              },
+            } as any;
+
+            // Create order
+            await orderController.createOrder(orderRequest, res);
+            
+            console.log('✅ Order created successfully from webhook');
+            return; // Response already sent by createOrder
+          } catch (orderError: any) {
+            console.error('❌ Error creating order from webhook:', orderError);
+            return res.status(500).json({
+              success: false,
+              message: 'Failed to create order from webhook',
+              error: orderError.message,
+            });
+          }
+        }
+      }
+
+      // Return success for other events (to acknowledge receipt)
+      return res.json({
+        success: true,
+        message: 'Webhook received',
+      });
+    } catch (error: any) {
+      console.error('Error handling Paystack webhook:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to process webhook',
         error: error.message,
       });
     }

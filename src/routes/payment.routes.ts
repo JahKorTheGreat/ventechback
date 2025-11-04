@@ -10,6 +10,9 @@ router.post('/initialize', paymentController.initializeTransaction);
 // Verify Paystack transaction
 router.post('/verify', paymentController.verifyTransaction);
 
+// Paystack webhook (for automatic order creation)
+router.post('/webhook', paymentController.handleWebhook);
+
 // Update transaction-order link (for linking after order creation)
 router.post('/update-order-link', paymentController.updateOrderLink);
 
