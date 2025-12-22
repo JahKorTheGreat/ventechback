@@ -145,18 +145,23 @@ class EnhancedEmailService {
       // Order confirmations are required for order tracking and legal purposes
       // Removed preference check - transactional emails must always be sent
 
-      // Email templates are in the root email-templates folder
-      // __dirname in compiled code is backend/dist/services/, so go up 3 levels to reach root
+      // Email templates are in backend/email-templates folder (or project root)
       // Try multiple path resolutions for reliability
-      let templatePath = path.join(__dirname, '../../../email-templates/order-confirmation.html');
+      let templatePath = path.join(__dirname, '../../email-templates/order-confirmation.html');
       
-      // If not found, try from project root (when running from backend directory)
+      // If not found, try from backend root (current working directory)
       if (!fs.existsSync(templatePath)) {
-        const projectRoot = process.cwd();
-        templatePath = path.join(projectRoot, 'email-templates', 'order-confirmation.html');
+        const backendRoot = process.cwd();
+        templatePath = path.join(backendRoot, 'email-templates', 'order-confirmation.html');
       }
       
-      // If still not found, try from backend root
+      // If still not found, try from project root (one level up from backend)
+      if (!fs.existsSync(templatePath)) {
+        const backendRoot = process.cwd();
+        templatePath = path.join(backendRoot, '..', 'email-templates', 'order-confirmation.html');
+      }
+      
+      // Last resort: try from compiled dist location
       if (!fs.existsSync(templatePath)) {
         templatePath = path.join(__dirname, '../../../../email-templates/order-confirmation.html');
       }
@@ -304,18 +309,23 @@ class EnhancedEmailService {
         ? '<span style="background-color: #000000; color: #ffffff; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block; margin-left: 10px;">PRE-ORDER</span>'
         : '<span style="background-color: #10b981; color: #ffffff; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; display: inline-block; margin-left: 10px;">REGULAR</span>';
 
-      // Email templates are in the root email-templates folder
-      // __dirname in compiled code is backend/dist/services/, so go up 3 levels to reach root
+      // Email templates are in backend/email-templates folder (or project root)
       // Try multiple path resolutions for reliability
-      let templatePath = path.join(__dirname, '../../../email-templates/order-status-update.html');
+      let templatePath = path.join(__dirname, '../../email-templates/order-status-update.html');
       
-      // If not found, try from project root (when running from backend directory)
+      // If not found, try from backend root (current working directory)
       if (!fs.existsSync(templatePath)) {
-        const projectRoot = process.cwd();
-        templatePath = path.join(projectRoot, 'email-templates', 'order-status-update.html');
+        const backendRoot = process.cwd();
+        templatePath = path.join(backendRoot, 'email-templates', 'order-status-update.html');
       }
       
-      // If still not found, try from backend root
+      // If still not found, try from project root (one level up from backend)
+      if (!fs.existsSync(templatePath)) {
+        const backendRoot = process.cwd();
+        templatePath = path.join(backendRoot, '..', 'email-templates', 'order-status-update.html');
+      }
+      
+      // Last resort: try from compiled dist location
       if (!fs.existsSync(templatePath)) {
         templatePath = path.join(__dirname, '../../../../email-templates/order-status-update.html');
       }

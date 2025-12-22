@@ -1,6 +1,6 @@
 // Load environment variables FIRST before any other imports
 import dotenv from 'dotenv';
-dotenv.config();
+ dotenv.config();
 
 // Now import app after env vars are loaded
 import app from './app';
