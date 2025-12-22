@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Cancelled - VENTECH</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            background-color: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .header {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .content {
+            padding: 30px;
+        }
+        .cancellation-badge {
+            display: inline-block;
+            background-color: #dc3545;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin: 10px 0;
+        }
+        .order-info {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }
+        .order-info h3 {
+            margin-top: 0;
+            color: #1A1A1A;
+        }
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        .info-label {
+            font-weight: bold;
+            color: #3A3A3A;
+        }
+        .info-value {
+            color: #1A1A1A;
+        }
+        .cancellation-reason {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .cancellation-reason h4 {
+            margin-top: 0;
+            color: #721c24;
+        }
+        .refund-info {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .refund-info h4 {
+            margin-top: 0;
+            color: #0c5460;
+        }
+        .cta-button {
+            display: inline-block;
+            background-color: #FF7A19;
+            color: white;
+            padding: 12px 30px;
+            text-decoration: none;
+            border-radius: 25px;
+            font-weight: bold;
+            margin: 20px 0;
+            transition: background-color 0.3s;
+        }
+        .cta-button:hover {
+            background-color: #E66600;
+        }
+        .footer {
+            background-color: #1A1A1A;
+            color: white;
+            padding: 20px;
+            text-align: center;
+            font-size: 14px;
+        }
+        .footer a {
+            color: #FF7A19;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>VENTECH</h1>
+            <p>Order Cancellation Notice</p>
+        </div>
+        
+        <div class="content">
+            <h2>Hello {{CUSTOMER_NAME}}!</h2>
+            
+            <p>We regret to inform you that your order <strong>{{ORDER_NUMBER}}</strong> has been cancelled.</p>
+            
+            <div class="cancellation-badge">Order Cancelled</div>
+            
+            <div class="cancellation-reason">
+                <h4>Reason for Cancellation:</h4>
+                <p>{{CANCELLATION_REASON}}</p>
+            </div>
+            
+            <div class="order-info">
+                <h3>Order Details</h3>
+                <div class="info-row">
+                    <span class="info-label">Order Number:</span>
+                    <span class="info-value">{{ORDER_NUMBER}}</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value">Cancelled</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">Cancellation Date:</span>
+                    <span class="info-value">{{CANCELLATION_DATE}}</span>
+                </div>
+            </div>
+            
+            <div class="refund-info">
+                <h4>💰 Refund Information</h4>
+                <p>If payment was already processed, a full refund will be issued to your original payment method within 3-5 business days.</p>
+                <p>You will receive a separate email confirmation once the refund has been processed.</p>
+            </div>
+            
+            <div style="text-align: center;">
+                <a href="https://ventechgadgets.com/orders" class="cta-button">View Order Details</a>
+            </div>
+            
+            <p>We apologize for any inconvenience this may cause. If you have any questions or would like to place a new order, please don't hesitate to contact our customer support team.</p>
+            
+            <p>Thank you for your understanding.</p>
+        </div>
+        
+        <div class="footer">
+            <p><strong>VENTECH Gadgets</strong></p>
+            <p>Your Trusted Tech Partner | Making Tech Accessible to All</p>
+            <p>
+                <a href="https://ventechgadgets.com">www.ventechgadgets.com</a> | 
+                <a href="mailto:support@ventechgadgets.com">support@ventechgadgets.com</a>
+            </p>
+            <p>Phone: +233 55 134 4310</p>
+        </div>
+    </div>
+</body>
+</html>

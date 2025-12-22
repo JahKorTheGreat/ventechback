@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Confirmation - VENTECH</title>
+</head>
+<body style="margin:0; padding:0; background-color:#f4f4f4; font-family: Arial, Helvetica, sans-serif;">
+
+<table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color:#f4f4f4;">
+  <tr>
+    <td align="center">
+
+      <!-- Main Container -->
+      <table width="600" cellpadding="0" cellspacing="0" role="presentation" style="background:#ffffff; border-radius:8px; overflow:hidden;">
+
+        <!-- Header -->
+        <tr>
+          <td align="center" style="background-color:#FF7A19; padding:30px 20px;">
+            <img src="{{LOGO_URL}}" alt="VENTECH" width="120" style="display:block; margin-bottom:20px;">
+            <p style="font-size:42px; margin:0;">✅</p>
+            <h1 style="color:#ffffff; font-size:26px; margin:10px 0 5px;">Order Confirmed!</h1>
+            <p style="color:#ffffff; font-size:16px; margin:0;">Thank you for your purchase</p>
+          </td>
+        </tr>
+
+        <!-- Content -->
+        <tr>
+          <td style="padding:30px; color:#1A1A1A;">
+
+            <p style="font-size:16px;">Hi <strong>{{CUSTOMER_NAME}}</strong>,</p>
+            <p style="font-size:14px; color:#3A3A3A;">
+              We've received your order and are preparing it for shipment.
+            </p>
+
+            <!-- Order Info -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9f9f9; border-radius:6px; margin:20px 0;">
+              <tr>
+                <td style="padding:15px;">
+                  <strong>Order Number</strong><br>
+                  {{ORDER_NUMBER}} {{ORDER_TYPE_BADGE}}
+                </td>
+                <td align="right" style="padding:15px;">
+                  <strong>Order Date</strong><br>
+                  {{ORDER_DATE}}
+                </td>
+              </tr>
+            </table>
+
+            <!-- Order Items -->
+            <h2 style="font-size:18px; margin-top: 30px;">Your Order</h2>
+
+            <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e0e0e0; border-radius:6px; margin-top: 15px;">
+              <thead>
+                <tr style="background-color: #f9f9f9;">
+                  <th style="padding: 12px; text-align: left; font-size: 13px; font-weight: bold; color: #1A1A1A; border-bottom: 2px solid #e0e0e0;">Product</th>
+                  <th style="padding: 12px; text-align: center; font-size: 13px; font-weight: bold; color: #1A1A1A; border-bottom: 2px solid #e0e0e0;">Qty</th>
+                  <th style="padding: 12px; text-align: right; font-size: 13px; font-weight: bold; color: #1A1A1A; border-bottom: 2px solid #e0e0e0;">Price</th>
+                  <th style="padding: 12px; text-align: right; font-size: 13px; font-weight: bold; color: #1A1A1A; border-bottom: 2px solid #e0e0e0;">Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                {{ORDER_ITEMS}}
+              </tbody>
+            </table>
+
+            <!-- Summary -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="background:#f9f9f9; margin-top:20px;">
+              <tr>
+                <td style="padding:10px;">Subtotal</td>
+                <td align="right" style="padding:10px;">GHS {{SUBTOTAL}}</td>
+              </tr>
+              <tr>
+                <td style="padding:10px;">Shipping</td>
+                <td align="right" style="padding:10px;">GHS {{SHIPPING}}</td>
+              </tr>
+              <tr>
+                <td style="padding:15px; font-size:18px;"><strong>Total</strong></td>
+                <td align="right" style="padding:15px; font-size:20px; color:#FF7A19;">
+                  <strong>GHS {{TOTAL}}</strong>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Shipping & Payment -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:30px;">
+              <tr>
+                <td width="50%" style="padding-right:10px;">
+                  <h3 style="font-size:15px;">Shipping Address</h3>
+                  <p style="font-size:13px; color:#3A3A3A;">{{SHIPPING_ADDRESS}}</p>
+                </td>
+                <td width="50%" style="padding-left:10px;">
+                  <h3 style="font-size:15px;">Payment Method</h3>
+                  <p style="font-size:13px;">{{PAYMENT_METHOD}}</p>
+                  <p style="font-size:12px; color:#28a745;"><strong>{{PAYMENT_STATUS}}</strong></p>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Button -->
+            <table width="100%" cellpadding="0" cellspacing="0" style="margin:30px 0;">
+              <tr>
+                <td align="center">
+                  <a href="{{TRACKING_URL}}" style="background:#FF7A19; color:#ffffff; text-decoration:none; padding:14px 30px; border-radius:6px; display:inline-block; font-weight:bold;">
+                    Track Your Order
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="font-size:13px; text-align:center;">
+              Need help? <a href="{{CONTACT_URL}}" style="color:#FF7A19;">Contact us</a>
+            </p>
+
+          </td>
+        </tr>
+
+        <!-- Footer -->
+        <tr>
+          <td align="center" style="background:#1A1A1A; color:#ffffff; padding:25px;">
+            <p style="margin:0; font-size:14px;"><strong>Thank you for shopping with VENTECH</strong></p>
+            <p style="margin:10px 0 0; font-size:11px; opacity:0.7;">
+              Ho Civic Center Shop #22 & Accra, Ghana<br>
+              © 2025 VENTECH
+            </p>
+          </td>
+        </tr>
+
+      </table>
+
+    </td>
+  </tr>
+</table>
+
+</body>
+</html>
