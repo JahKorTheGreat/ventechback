@@ -47,6 +47,8 @@ interface OrderData {
 }
 
 class PDFService {
+  private currentY: number = 0; // Track current Y position across methods
+
   async generateOrderPDF(orderData: OrderData): Promise<Buffer> {
     return new Promise(async (resolve, reject) => {
       try {
@@ -54,6 +56,9 @@ class PDFService {
         if (!orderData || !orderData.order_number) {
           throw new Error('Invalid order data: order_number is required');
         }
+
+        // Reset Y position tracker
+        this.currentY = 0;
 
         const doc = new PDFDocument({ 
           margin: 40,
@@ -91,13 +96,15 @@ class PDFService {
         this.addCustomerInfo(doc, orderData);
         
         // Order Items
-        this.addOrderItems(doc, orderData);
+        const itemsEndY = this.addOrderItems(doc, orderData);
+        this.currentY = itemsEndY;
         
         // Order Summary
-        this.addOrderSummary(doc, orderData);
+        const summaryEndY = this.addOrderSummary(doc, orderData);
+        this.currentY = summaryEndY;
         
         // Footer
-        this.addFooter(doc);
+        this.addFooter(doc, this.currentY);
 
         doc.end();
       } catch (error) {
@@ -139,58 +146,62 @@ class PDFService {
         throw new Error(`Content-Type indicates WebP format: ${contentType}. Please ensure the logo file is PNG format.`);
       }
       
-      // Add logo image - larger size with better positioning
+      // Add logo image - 30% smaller (150 * 0.7 = 105)
       // PDFKit supports PNG, JPEG, GIF formats
       // Using width only to maintain aspect ratio automatically (height will scale proportionally)
-      doc.image(logoBuffer, 40, 40, { width: 150 });
+      doc.image(logoBuffer, 40, 40, { width: 105 });
     } catch (error) {
       // If logo fails, use fallback
       throw error;
     }
 
-    // Contact information on right side
-    const contactX = 380;
-    doc.fontSize(9)
-       .fillColor('#666666')
-       .text('Email:', contactX, 45)
-       .fontSize(9)
-       .fillColor('#FF7A19')
-       .text('support@ventechgadgets.com', contactX, 58, { link: 'mailto:support@ventechgadgets.com' })
-       .fontSize(9)
-       .fillColor('#666666')
-       .text('Phone:', contactX, 75)
-       .fontSize(9)
-       .fillColor('#1A1A1A')
-       .text('+233 55 134 4310', contactX, 88)
-       .fontSize(9)
-       .fillColor('#666666')
-       .text('Website:', contactX, 105)
-       .fontSize(9)
-       .fillColor('#FF7A19')
-       .text('www.ventechgadgets.com', contactX, 118, { link: 'https://www.ventechgadgets.com' });
-
-    // Document Title - positioned below logo with better spacing
-    const titleY = 160;
+    // Document Title - centered between logo and contact info
     const docTitle = orderData?.is_pre_order ? 'PRE-ORDER INVOICE' : 'INVOICE';
-    doc.fontSize(24)
+    const titleX = 40 + 105 + 20; // Logo width (105) + spacing (20)
+    const titleY = 50; // Align with top of logo/contact
+    const titleWidth = 380 - titleX - 20; // Space between logo and contact info
+    
+    doc.fontSize(18) // Reduced from 24
        .fillColor('#1A1A1A')
        .font('Helvetica-Bold')
-       .text(docTitle, 40, titleY)
+       .text(docTitle, titleX, titleY, { width: titleWidth, align: 'center' })
        .font('Helvetica');
 
-    // Order number and date below title
-    doc.fontSize(9)
+    // Contact information on right side
+    const contactX = 380;
+    doc.fontSize(8) // Reduced from 9
        .fillColor('#666666')
-       .text('Order Number: ', 40, titleY + 35, { continued: true })
-       .fontSize(10)
+       .text('Email:', contactX, 45)
+       .fontSize(8) // Reduced from 9
+       .fillColor('#FF7A19')
+       .text('support@ventechgadgets.com', contactX, 56, { link: 'mailto:support@ventechgadgets.com' })
+       .fontSize(8) // Reduced from 9
+       .fillColor('#666666')
+       .text('Phone:', contactX, 70)
+       .fontSize(8) // Reduced from 9
+       .fillColor('#1A1A1A')
+       .text('+233 55 134 4310', contactX, 81)
+       .fontSize(8) // Reduced from 9
+       .fillColor('#666666')
+       .text('Website:', contactX, 95)
+       .fontSize(8) // Reduced from 9
+       .fillColor('#FF7A19')
+       .text('www.ventechgadgets.com', contactX, 106, { link: 'https://www.ventechgadgets.com' });
+
+    // Order number and date below header
+    const infoY = 120; // Reduced spacing
+    doc.fontSize(8) // Reduced from 9
+       .fillColor('#666666')
+       .text('Order Number: ', 40, infoY, { continued: true })
+       .fontSize(9) // Reduced from 10
        .fillColor('#1A1A1A')
        .font('Helvetica-Bold')
        .text(orderData?.order_number || 'N/A')
        .font('Helvetica')
-       .fontSize(9)
+       .fontSize(8) // Reduced from 9
        .fillColor('#666666')
-       .text('Order Date: ', 40, titleY + 50, { continued: true })
-       .fontSize(10)
+       .text('Order Date: ', 40, infoY + 12, { continued: true })
+       .fontSize(9) // Reduced from 10
        .fillColor('#1A1A1A')
        .text(orderData ? new Date(orderData.created_at).toLocaleDateString('en-US', { 
          year: 'numeric', 
@@ -198,19 +209,10 @@ class PDFService {
          day: 'numeric' 
        }) : '');
 
-    // Pre-Order Badge with better styling
-    if (orderData?.is_pre_order) {
-      doc.fontSize(9)
-         .fillColor('#FFFFFF')
-         .roundedRect(200, titleY + 35, 100, 22, 4)
-         .fill('#000000')
-         .font('Helvetica-Bold')
-         .text('PRE-ORDER', 200, titleY + 40, { width: 100, align: 'center' })
-         .font('Helvetica');
-    }
+    // Pre-Order Badge removed - no black rectangle
 
     // Decorative line separator with better styling
-    const separatorY = titleY + 75;
+    const separatorY = infoY + 30; // Reduced spacing
     doc.moveTo(40, separatorY)
        .lineTo(555, separatorY)
        .lineWidth(2)
@@ -234,14 +236,7 @@ class PDFService {
        .fillColor('#1A1A1A')
        .text(docTitle, 50, 120);
 
-    // Pre-Order Badge
-    if (orderData?.is_pre_order) {
-      doc.fontSize(10)
-         .fillColor('#FFFFFF')
-         .roundedRect(50, 145, 120, 20, 3)
-         .fill('#000000')
-         .text('PRE-ORDER', 60, 150, { align: 'center', width: 100 });
-    }
+    // Pre-Order Badge removed - no black rectangle
 
     // Line separator
     const separatorY = orderData?.is_pre_order ? 170 : 150;
@@ -251,19 +246,21 @@ class PDFService {
   }
 
   private addOrderInfo(doc: any, orderData: OrderData) {
-    const y = 255;
+    const y = 180; // Reduced from 255
     
-    // Section title with background
-    doc.roundedRect(40, y, 515, 25, 3)
+    // Section title with background - draw background first, then text on top
+    doc.roundedRect(40, y, 515, 20, 3) // Reduced height from 25 to 20
        .fillColor('#F8F9FA')
-       .fill()
-       .fontSize(12)
+       .fill();
+    
+    // Draw text on top of background
+    doc.fontSize(10) // Reduced from 12
        .fillColor('#1A1A1A')
        .font('Helvetica-Bold')
-       .text('Order Details', 50, y + 7)
+       .text('Order Details', 50, y + 5) // Adjusted vertical position
        .font('Helvetica');
 
-    const contentY = y + 35;
+    const contentY = y + 28; // Reduced from 35
 
     // Status badges with colors
     const getStatusColor = (status: string) => {
@@ -283,73 +280,75 @@ class PDFService {
     };
 
     // Left column - Order info
-    doc.fontSize(9)
+    doc.fontSize(8) // Reduced from 9
        .fillColor('#666666')
        .text('Status:', 50, contentY)
-       .fontSize(10)
+       .fontSize(9) // Reduced from 10
        .fillColor(getStatusColor(orderData.status))
        .font('Helvetica-Bold')
-       .text(orderData.status.toUpperCase(), 50, contentY + 15)
+       .text(orderData.status.toUpperCase(), 50, contentY + 12) // Reduced spacing
        .font('Helvetica')
-       .fontSize(9)
+       .fontSize(8) // Reduced from 9
        .fillColor('#666666')
-       .text('Payment Status:', 50, contentY + 40)
-       .fontSize(10)
+       .text('Payment Status:', 50, contentY + 30) // Reduced spacing
+       .fontSize(9) // Reduced from 10
        .fillColor(getPaymentColor(orderData.payment_status))
        .font('Helvetica-Bold')
-       .text(orderData.payment_status.toUpperCase(), 50, contentY + 55)
+       .text(orderData.payment_status.toUpperCase(), 50, contentY + 42) // Reduced spacing
        .font('Helvetica');
 
     // Right column - Pre-order info (if applicable)
     if (orderData.is_pre_order) {
-      doc.fontSize(9)
+      doc.fontSize(8) // Reduced from 9
          .fillColor('#666666')
          .text('Order Type:', 350, contentY)
-         .fontSize(10)
+         .fontSize(9) // Reduced from 10
          .fillColor('#1A1A1A')
          .font('Helvetica-Bold')
-         .text('PRE-ORDER', 350, contentY + 15)
+         .text('PRE-ORDER', 350, contentY + 12) // Reduced spacing
          .font('Helvetica');
 
       if (orderData.pre_order_shipping_option) {
-        doc.fontSize(9)
+        doc.fontSize(8) // Reduced from 9
            .fillColor('#666666')
-           .text('Shipping Method:', 350, contentY + 40)
-           .fontSize(10)
+           .text('Shipping Method:', 350, contentY + 30) // Reduced spacing
+           .fontSize(9) // Reduced from 10
            .fillColor('#1A1A1A')
-           .text(orderData.pre_order_shipping_option.replace('_', ' ').toUpperCase(), 350, contentY + 55, { width: 150 });
+           .text(orderData.pre_order_shipping_option.replace('_', ' ').toUpperCase(), 350, contentY + 42, { width: 150 }); // Reduced spacing
       }
 
       if (orderData.estimated_arrival_date) {
-        const estimatedY = orderData.pre_order_shipping_option ? contentY + 80 : contentY + 40;
-        doc.fontSize(9)
+        const estimatedY = orderData.pre_order_shipping_option ? contentY + 60 : contentY + 30; // Reduced spacing
+        doc.fontSize(8) // Reduced from 9
            .fillColor('#666666')
            .text('Estimated Arrival:', 350, estimatedY)
-           .fontSize(10)
+           .fontSize(9) // Reduced from 10
            .fillColor('#1A1A1A')
            .text(new Date(orderData.estimated_arrival_date).toLocaleDateString('en-US', {
              year: 'numeric',
              month: 'long',
              day: 'numeric'
-           }), 350, estimatedY + 15, { width: 150 });
+           }), 350, estimatedY + 12, { width: 150 }); // Reduced spacing
       }
     }
   }
 
   private addCustomerInfo(doc: any, orderData: OrderData) {
-    const y = 410;
+    const y = 250; // Reduced from 410
     
-    // Section title with background
-    doc.roundedRect(40, y, 515, 25, 3)
+    // Section title with background - draw background first, then text on top
+    doc.roundedRect(40, y, 515, 20, 3) // Reduced height from 25 to 20
        .fillColor('#F8F9FA')
-       .fill()
-       .fontSize(12)
+       .fill();
+    
+    // Draw text on top of background
+    doc.fontSize(10) // Reduced from 12
        .fillColor('#1A1A1A')
        .font('Helvetica-Bold')
-       .text('Customer Information', 50, y + 7)
+       .text('Customer Information', 50, y + 5) // Adjusted vertical position
        .font('Helvetica');
 
-    const contentY = y + 40;
+    const contentY = y + 28; // Reduced from 40
 
     const customerName = orderData.user 
       ? `${orderData.user.first_name || ''} ${orderData.user.last_name || ''}`.trim() || 'Unknown'
@@ -359,96 +358,89 @@ class PDFService {
     const address = orderData.shipping_address || orderData.delivery_address;
 
     // Customer details with better formatting
-    doc.fontSize(9)
+    doc.fontSize(8) // Reduced from 9
        .fillColor('#666666')
        .text('Name:', 50, contentY)
-       .fontSize(11)
+       .fontSize(9) // Reduced from 11
        .fillColor('#1A1A1A')
        .font('Helvetica-Bold')
-       .text(customerName, 50, contentY + 14)
+       .text(customerName, 50, contentY + 11) // Reduced spacing
        .font('Helvetica')
-       .fontSize(9)
+       .fontSize(8) // Reduced from 9
        .fillColor('#666666')
-       .text('Email:', 50, contentY + 38)
-       .fontSize(10)
+       .text('Email:', 50, contentY + 28) // Reduced spacing
+       .fontSize(9) // Reduced from 10
        .fillColor('#1A1A1A')
-       .text(customerEmail, 50, contentY + 52)
-       .fontSize(9)
+       .text(customerEmail, 50, contentY + 39) // Reduced spacing
+       .fontSize(8) // Reduced from 9
        .fillColor('#666666')
-       .text('Delivery Address:', 50, contentY + 76)
-       .fontSize(10)
+       .text('Delivery Address:', 50, contentY + 56) // Reduced spacing
+       .fontSize(9) // Reduced from 10
        .fillColor('#1A1A1A')
-       .text(this.formatAddress(address), 50, contentY + 90, { width: 300, lineGap: 3 });
+       .text(this.formatAddress(address), 50, contentY + 67, { width: 300, lineGap: 2 }); // Reduced spacing and lineGap
   }
 
-  private addOrderItems(doc: any, orderData: OrderData) {
-    const y = 570;
+  private addOrderItems(doc: any, orderData: OrderData): number {
+    const y = 360; // Reduced from 570
     
-    // Section title with background
-    doc.roundedRect(40, y, 515, 25, 3)
+    // Section title with background - draw background first, then text on top
+    doc.roundedRect(40, y, 515, 20, 3) // Reduced height from 25 to 20
        .fillColor('#F8F9FA')
-       .fill()
-       .fontSize(12)
+       .fill();
+    
+    // Draw text on top of background
+    doc.fontSize(10) // Reduced from 12
        .fillColor('#1A1A1A')
        .font('Helvetica-Bold')
-       .text('Order Items', 50, y + 7)
+       .text('Order Items', 50, y + 5) // Adjusted vertical position
        .font('Helvetica');
 
     // Get order items - handle both order_items and items
     const items = orderData.order_items || (orderData as any).items || [];
     
     if (!items || items.length === 0) {
-      doc.fontSize(10)
+      doc.fontSize(9) // Reduced from 10
          .fillColor('#666666')
-         .text('No items found', 50, y + 40);
-      return;
+         .text('No items found', 50, y + 28); // Reduced spacing
+      return y + 45; // Return Y position after "No items found" message
     }
 
-    // Table header with background
-    const tableY = y + 40;
-    doc.roundedRect(40, tableY, 515, 22, 0)
+    // Table header with background - draw background first, then text on top
+    const tableY = y + 28; // Reduced spacing
+    doc.roundedRect(40, tableY, 515, 18, 0) // Reduced height from 22 to 18
        .fillColor('#F8F9FA')
-       .fill()
-       .fontSize(9)
+       .fill();
+    
+    // Draw text on top of background
+    doc.fontSize(8) // Reduced from 9
        .fillColor('#666666')
        .font('Helvetica-Bold')
-       .text('PRODUCT', 50, tableY + 6)
-       .text('QTY', 335, tableY + 6, { width: 40, align: 'center' })
-       .text('UNIT PRICE', 385, tableY + 6, { width: 70, align: 'right' })
-       .text('TOTAL', 475, tableY + 6, { width: 70, align: 'right' })
+       .text('PRODUCT', 50, tableY + 5) // Adjusted vertical position
+       .text('QTY', 335, tableY + 5, { width: 40, align: 'center' })
+       .text('UNIT PRICE', 385, tableY + 5, { width: 70, align: 'right' })
+       .text('TOTAL', 475, tableY + 5, { width: 70, align: 'right' })
        .font('Helvetica');
 
     // Order items with alternating background
-    let currentY = tableY + 30;
+    let currentY = tableY + 24; // Reduced spacing
     items.forEach((item: any, index: number) => {
       const itemTotal = item.total_price || item.subtotal || (item.unit_price * item.quantity);
       const isPreOrderItem = item.is_pre_order || orderData.is_pre_order;
       
-      // Alternating row background
+      // Alternating row background - draw background first, then text on top
       if (index % 2 === 0) {
-        doc.roundedRect(40, currentY - 5, 515, 24, 0)
+        doc.roundedRect(40, currentY - 3, 515, 20, 0) // Reduced height from 24 to 20
            .fillColor('#FAFAFA')
            .fill();
       }
       
-      // Product name with pre-order badge
-      doc.fontSize(10)
+      // Product name - no pre-order badge (removed black rectangle)
+      doc.fontSize(9) // Reduced from 10
          .fillColor('#1A1A1A')
          .text(item.product_name || 'Unknown Product', 50, currentY, { width: 260, lineBreak: false, ellipsis: true });
       
-      // Add pre-order badge if applicable
-      if (isPreOrderItem) {
-        doc.fontSize(7)
-           .fillColor('#FFFFFF')
-           .roundedRect(50, currentY + 11, 55, 11, 2)
-           .fill('#000000')
-           .font('Helvetica-Bold')
-           .text('PRE-ORDER', 52, currentY + 13, { width: 51, align: 'center' })
-           .font('Helvetica');
-      }
-      
       // Quantity, unit price, and total
-      doc.fontSize(10)
+      doc.fontSize(9) // Reduced from 10
          .fillColor('#1A1A1A')
          .text((item.quantity || 0).toString(), 335, currentY, { width: 40, align: 'center' })
          .text(`GHS ${(item.unit_price || 0).toFixed(2)}`, 385, currentY, { width: 70, align: 'right' })
@@ -456,29 +448,32 @@ class PDFService {
          .text(`GHS ${itemTotal.toFixed(2)}`, 475, currentY, { width: 70, align: 'right' })
          .font('Helvetica');
       
-      currentY += 28;
+      currentY += 22; // Reduced from 28
     });
+    
+    // Return the Y position after all items
+    return currentY;
   }
 
-  private addOrderSummary(doc: any, orderData: OrderData) {
+  private addOrderSummary(doc: any, orderData: OrderData): number {
     // Calculate dynamic Y position based on number of items
     const items = orderData.order_items || (orderData as any).items || [];
     const itemCount = items.length;
-    const baseY = 570; // Start of items section
-    const headerHeight = 65; // Section title + table header
-    const itemHeight = 28; // Height per item
-    const y = baseY + headerHeight + (itemCount * itemHeight) + 20;
+    const baseY = 360; // Start of items section (reduced from 570)
+    const headerHeight = 48; // Section title + table header (reduced from 65)
+    const itemHeight = 22; // Height per item (reduced from 28)
+    const y = baseY + headerHeight + (itemCount * itemHeight) + 20; // Reduced spacing
     
+    // No page break - everything on one page
+    return this.addSummaryOnPage(doc, orderData, y);
+  }
+
+  private addSummaryOnPage(doc: any, orderData: OrderData, y: number): number {
     // Summary box with border
     const summaryWidth = 200;
     const summaryX = 355;
     
-    doc.roundedRect(summaryX, y, summaryWidth, 100, 4)
-       .lineWidth(1)
-       .strokeColor('#E5E7EB')
-       .stroke();
-
-    const summaryY = y + 15;
+    // Calculate required height based on number of summary items
     const summaryItems: Array<[string, string]> = [];
     
     summaryItems.push(['Subtotal:', `GHS ${orderData.subtotal.toFixed(2)}`]);
@@ -493,18 +488,28 @@ class PDFService {
     
     const shippingFee = orderData.shipping_fee || orderData.delivery_fee || 0;
     if (shippingFee > 0) {
-      const shippingLabel = orderData.is_pre_order ? 'Shipping:' : 'Shipping:';
+      const shippingLabel = orderData.is_pre_order ? 'Shipment:' : 'Delivery:';
       summaryItems.push([shippingLabel, `GHS ${shippingFee.toFixed(2)}`]);
     }
 
+    // Calculate box height: padding (15 top + 15 bottom) + items (16 each) + divider (3) + total (26) + spacing (10)
+    const boxHeight = 15 + (summaryItems.length * 16) + 3 + 26 + 10 + 15;
+    
+    doc.roundedRect(summaryX, y, summaryWidth, boxHeight, 4)
+       .lineWidth(1)
+       .strokeColor('#E5E7EB')
+       .stroke();
+
+    const summaryY = y + 15;
     let currentY = summaryY;
+    
     summaryItems.forEach(([label, value]) => {
-      doc.fontSize(10)
+      doc.fontSize(9) // Reduced from 10
          .fillColor('#666666')
          .text(label, summaryX + 15, currentY)
          .fillColor('#1A1A1A')
          .text(value, summaryX + 15, currentY, { width: summaryWidth - 30, align: 'right' });
-      currentY += 16;
+      currentY += 14; // Reduced from 16
     });
 
     // Divider line
@@ -515,45 +520,58 @@ class PDFService {
        .stroke();
 
     // Total with background
-    const totalY = currentY + 10;
-    doc.roundedRect(summaryX + 10, totalY, summaryWidth - 20, 26, 3)
+    const totalY = currentY + 8; // Reduced spacing
+    doc.roundedRect(summaryX + 10, totalY, summaryWidth - 20, 22, 3) // Reduced height from 26 to 22
        .fillColor('#FF7A19')
        .fill()
-       .fontSize(11)
+       .fontSize(10) // Reduced from 11
        .fillColor('#FFFFFF')
        .font('Helvetica-Bold')
-       .text('TOTAL:', summaryX + 20, totalY + 7)
-       .text(`GHS ${orderData.total.toFixed(2)}`, summaryX + 20, totalY + 7, { width: summaryWidth - 40, align: 'right' })
+       .text('TOTAL:', summaryX + 20, totalY + 6) // Adjusted vertical position
+       .text(`GHS ${orderData.total.toFixed(2)}`, summaryX + 20, totalY + 6, { width: summaryWidth - 40, align: 'right' })
        .font('Helvetica');
+    
+    // Return the Y position after the summary box
+    return totalY + 30; // totalY + box height (22) + spacing (8)
   }
 
-  private addFooter(doc: any) {
-    // Dynamic footer position - always at bottom of page with margin
-    const y = 720;
+  private addFooter(doc: any, contentEndY: number) {
+    // Position footer at the absolute bottom of the page
+    // A4 page height is 792 points, margin is 40, so bottom is at ~752
+    const pageHeight = 792;
+    const margin = 40;
+    const footerBottomY = pageHeight - margin; // ~752
+    
+    // Position footer content as close to bottom as possible
+    // Calculate from bottom up
+    const brandingY = footerBottomY - 5; // Very bottom, just 5 points from edge
+    const supportY = brandingY - 8; // 8 points above branding
+    const thankYouY = supportY - 10; // 10 points above support
+    const dividerY = thankYouY - 8; // 8 points above thank you message
     
     // Footer divider
-    doc.moveTo(40, y - 20)
-       .lineTo(555, y - 20)
+    doc.moveTo(40, dividerY)
+       .lineTo(555, dividerY)
        .lineWidth(1)
        .strokeColor('#E5E7EB')
        .stroke();
     
     // Thank you message
-    doc.fontSize(11)
+    doc.fontSize(9)
        .fillColor('#1A1A1A')
        .font('Helvetica-Bold')
-       .text('Thank you for choosing VENTECH!', 40, y, { align: 'center', width: 515 })
+       .text('Thank you for choosing VENTECH!', 40, thankYouY, { align: 'center', width: 515 })
        .font('Helvetica');
     
     // Simple footer text
-    doc.fontSize(8)
-       .fillColor('#666666')
-       .text('For support, please contact us using the details above.', 40, y + 25, { align: 'center', width: 515 });
-    
-    // Watermark/branding
     doc.fontSize(7)
+       .fillColor('#666666')
+       .text('For support, please contact us using the details above.', 40, supportY, { align: 'center', width: 515 });
+    
+    // Watermark/branding - at the absolute bottom
+    doc.fontSize(6)
        .fillColor('#CCCCCC')
-       .text('VENTECH Gadgets & Electronics - Trusted for Tech in Ghana', 40, y + 45, { align: 'center', width: 515 });
+       .text('VENTECH Gadgets & Electronics - Trusted for Tech in Ghana', 40, brandingY, { align: 'center', width: 515 });
   }
 
   private formatAddress(address: any): string {

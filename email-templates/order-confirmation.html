@@ -30,7 +30,7 @@
 
             <p style="font-size:16px;">Hi <strong>{{CUSTOMER_NAME}}</strong>,</p>
             <p style="font-size:14px; color:#3A3A3A;">
-              We've received your order and are preparing it for shipment.
+              {{ORDER_PREPARATION_MESSAGE}}
             </p>
 
             <!-- Order Info -->
@@ -71,7 +71,7 @@
                 <td align="right" style="padding:10px;">GHS {{SUBTOTAL}}</td>
               </tr>
               <tr>
-                <td style="padding:10px;">Shipping</td>
+                <td style="padding:10px;">{{SHIPPING_LABEL}}</td>
                 <td align="right" style="padding:10px;">GHS {{SHIPPING}}</td>
               </tr>
               <tr>

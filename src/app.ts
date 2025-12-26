@@ -14,6 +14,7 @@ import uploadRoutes from './routes/upload.routes';
 import contactRoutes from './routes/contact.routes';
 import bulkOrderRoutes from './routes/bulkOrder.routes';
 import affiliateRoutes from './routes/affiliate.routes';
+import couponRoutes from './routes/coupon.routes';
 import { errorHandler, notFound } from './middleware/error.middleware';
 
 const app: Application = express();
@@ -57,6 +58,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/bulk-orders', bulkOrderRoutes);
 app.use('/api/affiliate', affiliateRoutes);
+app.use('/api/coupons', couponRoutes);
 
 // Error handling
 app.use(notFound);

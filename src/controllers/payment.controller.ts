@@ -152,6 +152,8 @@ export class PaymentController {
           }
 
           // Try to find associated order by payment reference or order_id in metadata
+          let foundOrderId: string | null = null;
+          
           if (transaction.metadata?.order_id) {
             // Direct order_id from metadata
             const { data: orderData } = await supabaseAdmin
@@ -161,24 +163,36 @@ export class PaymentController {
               .maybeSingle();
             
             if (orderData) {
+              foundOrderId = orderData.id;
               transactionData.order_id = orderData.id;
               if (!transactionData.user_id && orderData.user_id) {
                 transactionData.user_id = orderData.user_id;
               }
             }
           } else if (transaction.metadata?.payment_reference) {
-            // Try to find order by payment_reference (which might be order_number)
-            const { data: orderData } = await supabaseAdmin
-              .from('orders')
-              .select('id, user_id, order_number, payment_reference')
-              .eq('payment_reference', transaction.metadata.payment_reference)
-              .or(`order_number.eq.${transaction.metadata.payment_reference}`)
-              .maybeSingle();
+            // Try to find order by payment_reference stored in shipping_address JSON
+            // payment_reference is stored in shipping_address JSON, not as a direct column
+            const paymentRef = transaction.metadata.payment_reference;
             
-            if (orderData) {
-              transactionData.order_id = orderData.id;
-              if (!transactionData.user_id && orderData.user_id) {
-                transactionData.user_id = orderData.user_id;
+            // First, try to find by checking shipping_address JSON
+            const { data: ordersByRef } = await supabaseAdmin
+              .from('orders')
+              .select('id, user_id, order_number, shipping_address')
+              .or(`order_number.eq.${paymentRef}`)
+              .limit(10); // Limit to avoid too many results
+            
+            // Check if any order has payment_reference in shipping_address
+            if (ordersByRef && ordersByRef.length > 0) {
+              for (const order of ordersByRef) {
+                const shippingAddr = order.shipping_address as any;
+                if (shippingAddr?.payment_reference === paymentRef || order.order_number === paymentRef) {
+                  foundOrderId = order.id;
+                  transactionData.order_id = order.id;
+                  if (!transactionData.user_id && order.user_id) {
+                    transactionData.user_id = order.user_id;
+                  }
+                  break;
+                }
               }
             }
           }
@@ -195,6 +209,47 @@ export class PaymentController {
             console.error('Error saving transaction to database:', dbError);
             // Don't fail the request if DB save fails
           }
+
+          // Update order payment_status if payment was successful and we have an order_id
+          const orderIdToUpdate = transactionData.order_id || foundOrderId;
+          if (isSuccessful && orderIdToUpdate) {
+            try {
+              // Determine payment method from Paystack channel
+              let paymentMethod = 'paystack';
+              if (transaction.channel) {
+                // Map Paystack channels to payment methods
+                const channelMap: Record<string, string> = {
+                  'card': 'paystack',
+                  'bank': 'paystack',
+                  'ussd': 'paystack',
+                  'qr': 'paystack',
+                  'mobile_money': 'paystack',
+                  'mpesa': 'paystack',
+                  'mtn': 'paystack',
+                  'vodafone': 'paystack',
+                  'tigo': 'paystack',
+                };
+                paymentMethod = channelMap[transaction.channel.toLowerCase()] || 'paystack';
+              }
+
+              const { error: updateOrderError } = await supabaseAdmin
+                .from('orders')
+                .update({
+                  payment_status: 'paid',
+                  payment_method: paymentMethod,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', orderIdToUpdate);
+
+              if (updateOrderError) {
+                console.error('Error updating order payment status:', updateOrderError);
+              } else {
+                console.log(`✅ Updated order ${orderIdToUpdate} payment_status to 'paid' with method '${paymentMethod}'`);
+              }
+            } catch (updateError) {
+              console.error('Error updating order payment status:', updateError);
+            }
+          }
         } catch (dbError) {
           console.error('Error saving transaction:', dbError);
           // Don't fail the request if DB save fails
@@ -206,7 +261,8 @@ export class PaymentController {
           data: {
             reference: transaction.reference,
             status: transaction.status, // 'success' if payment successful
-            amount: verifiedAmount,
+            amount: verifiedAmount, // ⚠️ Amount in pesewas - DO NOT use directly for order totals
+            amount_ghs: verifiedAmount / 100, // ✅ Converted to GHS for reference only
             currency: transaction.currency,
             customer: transaction.customer,
             metadata: transaction.metadata || {}, // Include metadata (checkout_data, user_id, etc.)

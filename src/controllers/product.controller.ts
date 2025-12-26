@@ -149,6 +149,12 @@ export const updateProduct = async (req: AuthRequest, res: Response) => {
     const { id } = req.params;
     const updates = req.body;
 
+    // ✅ Auto-sync in_stock flag with stock_quantity
+    // If stock_quantity is being updated, automatically set in_stock
+    if (updates.stock_quantity !== undefined) {
+      updates.in_stock = updates.stock_quantity > 0;
+    }
+
     const { data, error } = await supabaseAdmin
       .from('products')
       .update(updates)

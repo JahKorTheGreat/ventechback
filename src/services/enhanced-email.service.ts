@@ -230,14 +230,24 @@ class EnhancedEmailService {
       // Use direct logo URL
       const logoUrl = 'https://files.ventechgadgets.com/ventech-logomain.png';
       
+      // Determine shipping label: "Delivery" for regular orders, "Shipment" for pre-orders
+      const shippingLabel = isPreOrder ? 'Shipment' : 'Delivery';
+      
+      // Determine preparation message: "shipment" for pre-orders, "delivery" for regular orders
+      const preparationMessage = isPreOrder 
+        ? "We've received your order and are preparing it for shipment."
+        : "We've received your order and are preparing it for delivery.";
+      
       // Replace placeholders with actual data
       template = template
         .replace(/{{ORDER_NUMBER}}/g, orderData.order_number || 'N/A')
         .replace(/{{CUSTOMER_NAME}}/g, orderData.customer_name || 'Customer')
         .replace(/{{CUSTOMER_EMAIL}}/g, orderData.customer_email || 'N/A')
+        .replace(/{{ORDER_PREPARATION_MESSAGE}}/g, preparationMessage)
         .replace(/{{ORDER_DATE}}/g, orderData.created_at ? new Date(orderData.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : 'N/A')
         .replace(/{{TOTAL_AMOUNT}}/g, `GHS ${total.toFixed(2)}`)
         .replace(/{{SUBTOTAL}}/g, subtotal.toFixed(2))
+        .replace(/{{SHIPPING_LABEL}}/g, shippingLabel)
         .replace(/{{SHIPPING}}/g, shippingFee.toFixed(2))
         .replace(/{{TOTAL}}/g, total.toFixed(2))
         .replace(/{{PAYMENT_METHOD}}/g, paymentMethodDisplay)
@@ -451,8 +461,9 @@ class EnhancedEmailService {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || '';
     
     return items.map(item => {
-      const unitPrice = item.unit_price || item.price || 0;
-      const subtotal = item.subtotal || (unitPrice * (item.quantity || 0));
+      // Ensure unitPrice is a number
+      const unitPrice = Number(item.unit_price || item.price || 0);
+      const subtotal = Number(item.subtotal || (unitPrice * (item.quantity || 0)));
       
       // Get product image URL - try multiple possible fields
       let imageUrl = item.product_image || item.thumbnail || item.image_url || item.image || '';

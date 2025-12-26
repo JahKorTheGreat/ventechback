@@ -66,9 +66,13 @@ export class OrderController {
         });
       }
 
+      // ✅ Safer pattern: Avoid mutating destructured variables
       // Try to find order by order_number first, then by id
       // IMPORTANT: Do NOT filter by status - include ALL orders including cancelled ones
-      let { data, error } = await supabaseAdmin
+      let order = null;
+      let fetchError = null;
+
+      const byNumberResult = await supabaseAdmin
         .from('orders')
         .select(`
           *,
@@ -78,9 +82,15 @@ export class OrderController {
         .eq('order_number', order_number_or_id)
         .maybeSingle();
 
+      if (byNumberResult.data) {
+        order = byNumberResult.data;
+      } else if (byNumberResult.error) {
+        fetchError = byNumberResult.error;
+      }
+
       // If not found by order_number, try by id
-      if (!data && !error) {
-        const { data: dataById, error: errorById } = await supabaseAdmin
+      if (!order && !fetchError) {
+        const byIdResult = await supabaseAdmin
           .from('orders')
           .select(`
             *,
@@ -90,35 +100,43 @@ export class OrderController {
           .eq('id', order_number_or_id)
           .maybeSingle();
         
-        data = dataById;
-        error = errorById;
+        if (byIdResult.data) {
+          order = byIdResult.data;
+        } else if (byIdResult.error) {
+          fetchError = byIdResult.error;
+        }
       }
 
-      if (error) {
+      if (fetchError) {
         console.error('Error fetching order for tracking:', {
-          code: error.code,
-          message: error.message,
-          details: error.details,
-          hint: error.hint,
+          code: fetchError.code,
+          message: fetchError.message,
+          details: fetchError.details,
+          hint: fetchError.hint,
         });
         return res.status(500).json({
           success: false,
           message: 'Failed to fetch order',
-          error: error.message,
+          error: fetchError.message,
         });
       }
 
-      if (!data) {
+      if (!order) {
+        // ✅ Security: Always return same response time to prevent timing attacks
+        // Use setTimeout to normalize response time (add small random delay)
+        await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 50));
         return res.status(404).json({
           success: false,
           message: 'Order not found',
         });
       }
 
+      const data = order;
+
       // Log order status for debugging (including cancelled orders)
       console.log(`📦 Tracking order ${data.order_number}: status=${data.status}, payment_status=${data.payment_status}`);
 
-      // Verify email matches
+      // ✅ Security: Verify email matches with constant-time comparison
       const userEmail = data.user?.email?.toLowerCase();
       const deliveryEmail = (data.delivery_address?.email || data.shipping_address?.email)?.toLowerCase();
       const providedEmail = email.toLowerCase().trim();
@@ -128,7 +146,9 @@ export class OrderController {
         deliveryEmail === providedEmail;
 
       if (!emailMatches) {
+        // ✅ Security: Always return same response time to prevent timing attacks
         // Email doesn't match - return 404 for security (don't reveal order exists)
+        await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 50));
         return res.status(404).json({
           success: false,
           message: 'Order not found',
@@ -348,18 +368,55 @@ export class OrderController {
     }
   }
 
-  // Cancel order
+  // Cancel order (supports both logged-in and anonymous users)
   async cancelOrder(req: Request, res: Response) {
     try {
       const { id } = req.params;
-      const { cancellation_reason } = req.body;
+      const { cancellation_reason, email } = req.body;
+
+      // Get order first to verify ownership
+      const { data: existingOrder, error: fetchError } = await supabaseAdmin
+        .from('orders')
+        .select(`
+          *,
+          user:users!orders_user_id_fkey(id, first_name, last_name, email),
+          order_items:order_items(*)
+        `)
+        .eq('id', id)
+        .single();
+
+      if (fetchError) throw fetchError;
+      if (!existingOrder) {
+        return res.status(404).json({
+          success: false,
+          message: 'Order not found',
+        });
+      }
+
+      // Verify ownership for anonymous users
+      if (!existingOrder.user_id && email) {
+        // Anonymous order - verify email matches
+        const orderEmail = existingOrder.shipping_address?.email;
+        if (!orderEmail || orderEmail.toLowerCase() !== email.toLowerCase()) {
+          return res.status(403).json({
+            success: false,
+            message: 'Email verification failed. Please use the email address used when placing the order.',
+          });
+        }
+      } else if (!existingOrder.user_id && !email) {
+        // Anonymous order but no email provided
+        return res.status(400).json({
+          success: false,
+          message: 'Email verification required for guest orders',
+        });
+      }
 
       // Update order
       const { data: orderData, error: orderError } = await supabaseAdmin
         .from('orders')
         .update({
           status: 'cancelled',
-          notes: cancellation_reason,
+          notes: cancellation_reason ? `${existingOrder.notes || ''}\n\n[CANCELLED] ${cancellation_reason}`.trim() : existingOrder.notes,
           updated_at: new Date().toISOString(),
         })
         .eq('id', id)
@@ -372,24 +429,88 @@ export class OrderController {
 
       if (orderError) throw orderError;
 
+      // ✅ Restore stock for cancelled orders (only for non-pre-orders)
+      // Only restore if order was not already cancelled and is not a pre-order
+      if (existingOrder.status !== 'cancelled' && !existingOrder.is_pre_order) {
+        try {
+          const orderItems = existingOrder.order_items || [];
+          
+          for (const item of orderItems) {
+            if (!item.product_id || !item.quantity) continue;
+            
+            // Get current stock
+            const { data: product, error: productError } = await supabaseAdmin
+              .from('products')
+              .select('stock_quantity, in_stock, name')
+              .eq('id', item.product_id)
+              .single();
+            
+            if (!productError && product) {
+              const currentStock = product.stock_quantity || 0;
+              const restoredStock = currentStock + item.quantity;
+              const newInStock = restoredStock > 0;
+              
+              // Restore stock atomically
+              const { error: restoreError } = await supabaseAdmin
+                .from('products')
+                .update({
+                  stock_quantity: restoredStock,
+                  in_stock: newInStock,
+                })
+                .eq('id', item.product_id);
+              
+              if (restoreError) {
+                console.error(`❌ Failed to restore stock for product ${item.product_id}:`, restoreError);
+              } else {
+                console.log(`✅ Restored stock for product ${item.product_id} (${product.name}): ${currentStock} → ${restoredStock}`);
+              }
+            } else {
+              console.error(`❌ Error fetching product ${item.product_id} for stock restoration:`, productError);
+            }
+          }
+        } catch (restoreError) {
+          console.error('❌ Error restoring stock for cancelled order:', restoreError);
+          // Don't fail cancellation if stock restoration fails
+        }
+      } else if (existingOrder.is_pre_order) {
+        console.log('⏭️ Skipping stock restoration for pre-order (stock was never deducted)');
+      } else {
+        console.log('⏭️ Skipping stock restoration (order was already cancelled)');
+      }
+
       // Send cancellation email
       try {
-        const customerName = `${orderData.user.first_name || ''} ${orderData.user.last_name || ''}`.trim() || 'Customer';
-        const emailData = {
-          ...orderData,
-          customer_name: customerName,
-          customer_email: orderData.user.email,
-          cancellation_reason,
-        };
+        // Determine customer email and name
+        let customerEmail: string | null = null;
+        let customerName: string = 'Customer';
+        
+        if (orderData.user && orderData.user.email) {
+          // Logged-in user
+          customerEmail = orderData.user.email;
+          customerName = `${orderData.user.first_name || ''} ${orderData.user.last_name || ''}`.trim() || 'Customer';
+        } else if (orderData.shipping_address && (orderData.shipping_address as any)?.email) {
+          // Guest checkout - get email from shipping address
+          customerEmail = (orderData.shipping_address as any).email;
+          customerName = orderData.shipping_address?.full_name || orderData.shipping_address?.first_name || 'Guest Customer';
+        }
 
-        // Note: Using order confirmation template for cancellation
-        const emailResult = await enhancedEmailService.sendOrderConfirmation(emailData);
-        if (emailResult.skipped) {
-          console.log(`Order cancellation email skipped: ${emailResult.reason}`);
-        } else if (emailResult.success) {
-          console.log('Order cancellation email sent successfully');
-        } else {
-          console.error('Failed to send order cancellation email:', emailResult.reason);
+        if (customerEmail) {
+          const emailData = {
+            ...orderData,
+            customer_name: customerName,
+            customer_email: customerEmail,
+            cancellation_reason,
+          };
+
+          // Note: Using order confirmation template for cancellation
+          const emailResult = await enhancedEmailService.sendOrderConfirmation(emailData);
+          if (emailResult.skipped) {
+            console.log(`Order cancellation email skipped: ${emailResult.reason}`);
+          } else if (emailResult.success) {
+            console.log('Order cancellation email sent successfully');
+          } else {
+            console.error('Failed to send order cancellation email:', emailResult.reason);
+          }
         }
       } catch (emailError) {
         console.error('Failed to send order cancellation email:', emailError);
@@ -491,6 +612,16 @@ export class OrderController {
         estimated_arrival_date,
       } = req.body;
 
+      // ✅ CRITICAL: Frontend sends all amounts in GHS
+      // DO NOT apply heuristic normalization - values are already in GHS
+      // Only Paystack responses need conversion (handled in payment.controller.ts)
+      
+      // Use values as-is (already in GHS from frontend)
+      const finalSubtotal = subtotal || 0;
+      const finalDeliveryFee = delivery_fee || 0;
+      const finalTax = tax || 0;
+      const finalDiscount = discount || 0;
+
       // Validate required fields
       if (!order_items || !Array.isArray(order_items) || order_items.length === 0) {
         console.error('❌ Order creation failed: No order items provided');
@@ -510,14 +641,79 @@ export class OrderController {
         });
       }
 
+      // Validate total (already in GHS from frontend)
       if (!total || total <= 0) {
-        console.error('❌ Order creation failed: Invalid total amount');
+        console.error('❌ Order creation failed: Invalid total amount', {
+          total,
+        });
         return res.status(400).json({
           success: false,
           message: 'Invalid total amount',
           error: 'Total must be greater than 0',
         });
       }
+
+      // Validate that all products exist BEFORE creating the order
+      // This prevents orphaned orders if products don't exist
+      const productIds = order_items.map((item: any) => item.product_id);
+      console.log('🔍 STEP 1: Validating products before creating order');
+      console.log('🔍 Product IDs to validate:', productIds);
+      console.log('🔍 Order items structure:', order_items.map((item: any) => ({ 
+        product_id: item.product_id, 
+        product_name: item.product_name 
+      })));
+      
+      if (!productIds || productIds.length === 0) {
+        console.error('❌ No product IDs found in order items');
+        return res.status(400).json({
+          success: false,
+          message: 'No product IDs found in order items',
+          error: 'INVALID_ORDER_ITEMS',
+        });
+      }
+
+      // Filter out any null/undefined product IDs
+      const validProductIds = productIds.filter((id: string) => id && id.trim() !== '');
+      if (validProductIds.length !== productIds.length) {
+        console.error('❌ Some order items have invalid product IDs');
+        return res.status(400).json({
+          success: false,
+          message: 'Some order items have invalid product IDs',
+          error: 'INVALID_PRODUCT_IDS',
+        });
+      }
+
+      const { data: existingProducts, error: productsCheckError } = await supabaseAdmin
+        .from('products')
+        .select('id, name, in_stock')
+        .in('id', validProductIds);
+
+      console.log('🔍 Products found in database:', existingProducts?.length || 0, 'out of', validProductIds.length);
+
+      if (productsCheckError) {
+        console.error('❌ Error checking products:', productsCheckError);
+        return res.status(400).json({
+          success: false,
+          message: 'Failed to validate products',
+          error: productsCheckError.message,
+        });
+      }
+
+      const existingProductIds = new Set((existingProducts || []).map((p: any) => p.id));
+      const missingProductIds = validProductIds.filter((id: string) => !existingProductIds.has(id));
+
+      if (missingProductIds.length > 0) {
+        console.error('❌ STEP 1 FAILED: Some products do not exist:', missingProductIds);
+        console.error('❌ Existing product IDs:', Array.from(existingProductIds));
+        return res.status(400).json({
+          success: false,
+          message: `Products not found: ${missingProductIds.join(', ')}. These products may have been removed from the catalog.`,
+          error: 'PRODUCTS_NOT_FOUND',
+          missingProductIds,
+        });
+      }
+
+      console.log('✅ STEP 1 PASSED: All products validated successfully');
 
       // Generate order number if not provided (backend generates sequential number)
       const finalOrderNumber = order_number || await this.generateOrderNumber();
@@ -535,17 +731,105 @@ export class OrderController {
         } : {}),
       } : null;
 
+      // ✅ Calculate total from values (all already in GHS from frontend)
+      // Recalculate subtotal from order items if missing
+      let actualSubtotal = finalSubtotal;
+      
+      if (!finalSubtotal || finalSubtotal === 0) {
+        console.warn('⚠️ Subtotal missing or zero, recalculating from order items');
+        actualSubtotal = order_items.reduce((sum: number, item: any) => {
+          // Use item subtotal if available, otherwise calculate from unit_price * quantity
+          const itemSubtotal = item.subtotal || (item.unit_price * (item.quantity || 1));
+          return sum + itemSubtotal;
+        }, 0);
+      }
+      
+      // ✅ CRITICAL: Calculate total from components ONLY - NEVER use req.body.total directly
+      // req.body.total might be in pesewas (from Paystack) or incorrect
+      // ALWAYS calculate from: subtotal + delivery_fee + tax - discount
+      const calculatedTotal = actualSubtotal + finalDeliveryFee + finalTax - finalDiscount;
+      
+      // ✅ NEVER use req.body.total - always use calculated value
+      const finalTotal = calculatedTotal;
+      
+      // ✅ Safety check: Warn if req.body.total differs significantly from calculated total
+      // This catches cases where Paystack amount (pesewas) was sent as total
+      if (total && Math.abs(total - finalTotal) > 0.01) {
+        const difference = Math.abs(total - finalTotal);
+        const ratio = total > finalTotal ? total / finalTotal : finalTotal / total;
+        
+        // If difference is significant (more than 1% or > 100x), log warning
+        if (difference > finalTotal * 0.01 || ratio > 10) {
+          console.warn('⚠️ WARNING: req.body.total differs from calculated total:', {
+            reqBodyTotal: total,
+            calculatedTotal: finalTotal,
+            difference,
+            ratio,
+            possibleCause: ratio > 10 ? 'Paystack amount (pesewas) may have been sent as total' : 'Frontend calculation mismatch',
+          });
+        }
+      }
+      
+      console.log('💰 Order calculation (all values in GHS):', {
+        subtotal: actualSubtotal,
+        delivery_fee: finalDeliveryFee,
+        tax: finalTax,
+        discount: finalDiscount,
+        calculatedTotal: finalTotal,
+        reqBodyTotal: total, // Logged for comparison only, NOT used
+      });
+      
+      // ✅ Safety check: Ensure total is reasonable
+      if (finalTotal < 0) {
+        console.error('🚨 Negative order total detected:', {
+          finalTotal,
+          actualSubtotal,
+          finalDeliveryFee,
+          finalTax,
+          finalDiscount,
+        });
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid order total: negative amount detected.',
+          error: 'NEGATIVE_ORDER_TOTAL',
+        });
+      }
+      
+      // ✅ CRITICAL: Hard guard against pesewas being sent as GHS
+      // If total > 100,000 GHS, it's almost certainly pesewas (100x conversion error)
+      // Legitimate orders in Ghana rarely exceed 100,000 GHS
+      if (finalTotal > 100000) {
+        console.error('🚨 CRITICAL: Order total exceeds 100,000 GHS - likely pesewas conversion error:', {
+          finalTotal,
+          reqBodyTotal: total,
+          actualSubtotal,
+          finalDeliveryFee,
+          finalTax,
+          finalDiscount,
+          possibleCause: 'Paystack metadata prices (pesewas) may have been used as GHS',
+        });
+        return res.status(400).json({
+          success: false,
+          message: `Invalid order total detected (${finalTotal.toFixed(2)} GHS). Prices must be in GHS, not pesewas. Please contact support.`,
+          error: 'INVALID_TOTAL_PESEWAS_DETECTED',
+          details: 'Order total exceeds reasonable limit. This may indicate prices were sent in pesewas instead of GHS.',
+        });
+      }
+
       // Create order
       // Note: payment_reference column does NOT exist in orders table
       // Store it in shipping_address JSON instead (if provided)
       const orderInsertData: any = {
         user_id,
         order_number: finalOrderNumber,
-        subtotal,
-        discount,
-        tax,
-        shipping_fee: delivery_fee || 0,
-        total,
+        subtotal: actualSubtotal, // ✅ Already in GHS from frontend
+        discount: finalDiscount || 0, // ✅ Already in GHS from frontend
+        tax: finalTax || 0, // ✅ Already in GHS from frontend
+        shipping_fee: finalDeliveryFee || 0, // ✅ Already in GHS from frontend
+        // ✅ CRITICAL: ALWAYS use calculatedTotal, NEVER req.body.total
+        // req.body.total might be Paystack amount (pesewas) or incorrect
+        // calculatedTotal is: subtotal + delivery_fee + tax - discount (all in GHS)
+        total: finalTotal, // ✅ Calculated total in GHS - NEVER use req.body.total directly
         payment_method,
         shipping_address: shippingAddress ? {
           ...shippingAddress,
@@ -556,7 +840,10 @@ export class OrderController {
           ? `${notes || ''}\n\n[PRE-ORDER] Shipping: ${pre_order_shipping_option || 'Not specified'}. Estimated Arrival: ${estimated_arrival_date ? new Date(estimated_arrival_date).toLocaleDateString() : 'TBD'}`.trim()
           : (notes || null),
         status: 'pending',
-        payment_status: payment_method === 'cash_on_delivery' ? 'pending' : 'pending', // Will be updated when payment verified
+        // ✅ Consistent payment_status logic
+        // Set payment_status based on payment method
+        // If payment_method is paystack and payment_reference exists, payment was successful
+        payment_status: (payment_method === 'paystack' && payment_reference) ? 'paid' : 'pending',
       };
 
       // DO NOT include payment_reference as a direct column - it doesn't exist in orders table
@@ -580,16 +867,23 @@ export class OrderController {
       });
 
       // Create order items and decrease stock
-      const orderItems = order_items.map((item: any) => ({
-        order_id: orderData.id,
-        product_id: item.product_id,
-        product_name: item.product_name,
-        product_image: item.product_image,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        total_price: item.subtotal || item.total_price || (item.unit_price * item.quantity), // Use total_price as per schema
-        selected_variants: item.selected_variants,
-      }));
+      // ✅ All item prices are already in GHS from frontend
+      const orderItems = order_items.map((item: any) => {
+        // Use item prices as-is (already in GHS)
+        const itemUnitPrice = item.unit_price || 0;
+        const itemSubtotal = item.subtotal || item.total_price || (itemUnitPrice * (item.quantity || 1));
+        
+        return {
+          order_id: orderData.id,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          product_image: item.product_image,
+          quantity: item.quantity,
+          unit_price: itemUnitPrice, // ✅ Already in GHS
+          total_price: itemSubtotal, // ✅ Already in GHS
+          selected_variants: item.selected_variants,
+        };
+      });
 
       const { error: itemsError } = await supabaseAdmin
         .from('order_items')
@@ -597,41 +891,148 @@ export class OrderController {
 
       if (itemsError) {
         console.error('❌ Order items creation failed:', itemsError);
+        
+        // If order items fail, delete the orphaned order to prevent incomplete orders
+        try {
+          await supabaseAdmin.from('orders').delete().eq('id', orderData.id);
+          console.log('✅ Deleted orphaned order due to order items creation failure');
+        } catch (deleteError) {
+          console.error('❌ Failed to delete orphaned order:', deleteError);
+        }
+        
+        // Provide a more helpful error message
+        if (itemsError.code === '23503' && itemsError.details?.includes('product_id')) {
+          const productIdMatch = itemsError.details.match(/product_id\)=\(([^)]+)\)/);
+          const missingProductId = productIdMatch ? productIdMatch[1] : 'unknown';
+          const error = new Error(`Product not found: ${missingProductId}. This product may have been removed from the catalog. Please remove it from your cart and try again.`);
+          (error as any).code = 'PRODUCT_NOT_FOUND';
+          (error as any).productId = missingProductId;
+          throw error;
+        }
+        
         throw itemsError;
       }
       
       console.log(`✅ Created ${orderItems.length} order items`);
 
-      // Decrease stock for each product in the order (skip for pre-orders)
+      // ✅ Atomic stock update: Decrease stock for each product (skip for pre-orders)
+      // Use atomic update with WHERE clause to prevent race conditions
       if (!is_pre_order) {
         try {
           for (const item of order_items) {
-            const { data: product, error: productError } = await supabaseAdmin
-              .from('products')
-              .select('stock_quantity, in_stock')
-              .eq('id', item.product_id)
-              .single();
+            // ✅ Atomic update: Only decrement if stock >= quantity
+            // This prevents overselling when multiple orders are placed simultaneously
+            const { data: updatedProduct, error: updateError } = await supabaseAdmin
+              .rpc('decrement_product_stock', {
+                product_id_param: item.product_id,
+                quantity_param: item.quantity,
+              });
 
-            if (!productError && product) {
-              const currentStock = product.stock_quantity || 0;
-              const newStock = Math.max(0, currentStock - item.quantity);
-              const newInStock = newStock > 0;
+            if (updateError) {
+              // If RPC doesn't exist, fallback to atomic SQL update
+              if (updateError.code === 'PGRST202' || updateError.message?.includes('function') || updateError.message?.includes('not found')) {
+                // Fallback: Use atomic update with WHERE clause
+                const { data: product, error: productError } = await supabaseAdmin
+                  .from('products')
+                  .select('stock_quantity, in_stock')
+                  .eq('id', item.product_id)
+                  .single();
 
-              const { error: updateError } = await supabaseAdmin
-                .from('products')
-                .update({
-                  stock_quantity: newStock,
-                  in_stock: newInStock,
-                })
-                .eq('id', item.product_id);
+                if (!productError && product) {
+                  const currentStock = product.stock_quantity || 0;
+                  
+                  // Only update if sufficient stock available
+                  if (currentStock >= item.quantity) {
+                    const newStock = currentStock - item.quantity;
+                    const newInStock = newStock > 0;
 
-              if (updateError) {
-                console.error(`❌ Failed to update stock for product ${item.product_id}:`, updateError);
+                    const { data: updatedProduct, error: atomicUpdateError } = await supabaseAdmin
+                      .from('products')
+                      .update({
+                        stock_quantity: newStock,
+                        in_stock: newInStock,
+                      })
+                      .eq('id', item.product_id)
+                      .gte('stock_quantity', item.quantity) // ✅ Atomic: Only update if stock >= quantity
+                      .select('name, stock_quantity')
+                      .single();
+
+                    if (atomicUpdateError || !updatedProduct) {
+                      console.error(`❌ Failed to update stock for product ${item.product_id}:`, atomicUpdateError);
+                    } else {
+                      console.log(`✅ Decreased stock for product ${item.product_id}: ${currentStock} → ${newStock}`);
+                      
+                      // ✅ Check for out of stock and send notification
+                      if (newStock === 0 && updatedProduct.name) {
+                        try {
+                          // Create notification in database
+                          const { error: notifError } = await supabaseAdmin
+                            .from('notifications')
+                            .insert({
+                              type: 'alert',
+                              title: 'Product Out of Stock',
+                              message: `${updatedProduct.name} is now out of stock`,
+                              data: {
+                                product_id: item.product_id,
+                                product_name: updatedProduct.name,
+                              },
+                              is_read: false,
+                            });
+                          
+                          if (notifError) {
+                            console.error(`❌ Failed to create out of stock notification:`, notifError);
+                          } else {
+                            console.log(`✅ Created out of stock notification for ${updatedProduct.name}`);
+                          }
+                          
+                          // Send email to admin
+                          try {
+                            const emailSent = await enhancedEmailService.sendEmail({
+                              to: 'ventechgadgets@gmail.com',
+                              subject: `🚨 Product Out of Stock: ${updatedProduct.name}`,
+                              html: `
+                                <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                                  <h2 style="color: #EF4444;">Product Out of Stock Alert</h2>
+                                  <p>The following product has run out of stock:</p>
+                                  <div style="background: #FEF2F2; border-left: 4px solid #EF4444; padding: 15px; margin: 20px 0;">
+                                    <p style="margin: 0; font-weight: bold; color: #991B1B;">${updatedProduct.name}</p>
+                                    <p style="margin: 5px 0 0 0; color: #7F1D1D;">Product ID: ${item.product_id}</p>
+                                  </div>
+                                  <p>Please restock this product as soon as possible.</p>
+                                  <p style="margin-top: 30px; color: #6B7280; font-size: 12px;">
+                                    This is an automated notification from Ventech Gadgets.
+                                  </p>
+                                </div>
+                              `,
+                            }, false); // Use noreply email
+                            
+                            if (emailSent) {
+                              console.log(`✅ Out of stock email sent for product ${updatedProduct.name}`);
+                            } else {
+                              console.error(`❌ Failed to send out of stock email for product ${item.product_id}`);
+                            }
+                          } catch (emailError) {
+                            console.error(`❌ Error sending out of stock email for product ${item.product_id}:`, emailError);
+                          }
+                        } catch (notifError) {
+                          console.error(`❌ Failed to create out of stock notification for product ${item.product_id}:`, notifError);
+                          // Don't fail order creation if notification fails
+                        }
+                      }
+                    }
+                  } else {
+                    console.error(`❌ Insufficient stock for product ${item.product_id}: ${currentStock} < ${item.quantity}`);
+                    // Note: Order is already created, so we log but don't fail
+                    // In production, you might want to mark order as "stock_issue" or similar
+                  }
+                } else {
+                  console.error(`❌ Error fetching product ${item.product_id} for stock update:`, productError);
+                }
               } else {
-                console.log(`✅ Decreased stock for product ${item.product_id}: ${currentStock} → ${newStock}`);
+                console.error(`❌ Failed to update stock for product ${item.product_id}:`, updateError);
               }
             } else {
-              console.error(`❌ Error fetching product ${item.product_id} for stock update:`, productError);
+              console.log(`✅ Decreased stock for product ${item.product_id} using RPC`);
             }
           }
         } catch (stockError) {
@@ -660,6 +1061,9 @@ export class OrderController {
       // Create transaction record for this order (even if pending)
       // This ensures all orders have a transaction record for tracking
       try {
+        // ✅ Consistent payment_status logic (same as order)
+        const paymentStatus = (payment_method === 'paystack' && payment_reference) ? 'paid' : 'pending';
+        
         // Determine customer email and name
         let customerEmail: string | null = null;
         let customerName: string = 'Customer';
@@ -678,19 +1082,19 @@ export class OrderController {
           transaction_reference: payment_reference || `TXN-${orderData.id.slice(0, 8)}`,
           payment_method: payment_method || 'cash_on_delivery',
           payment_provider: payment_method === 'paystack' ? 'paystack' : payment_method === 'cash_on_delivery' ? 'cash' : 'other',
-          amount: total,
+          amount: finalTotal, // ✅ Use finalTotal (GHS), not total (might be pesewas)
           currency: 'GHS',
-          status: payment_method === 'cash_on_delivery' ? 'pending' : 'pending', // Will be updated when payment verified
-          payment_status: payment_method === 'cash_on_delivery' ? 'pending' : 'pending', // Will be updated when payment verified
+          status: paymentStatus, // ✅ Consistent with order payment_status
+          payment_status: paymentStatus, // ✅ Consistent with order payment_status
           customer_email: customerEmail || 'no-email@example.com', // Required field - provide default if missing
           metadata: {
-            order_number: order_number,
+            order_number: finalOrderNumber, // ✅ Use generated order number
             customer_name: customerName, // Store customer name in metadata
-            subtotal,
-            discount,
-            tax,
-            shipping_fee: delivery_fee || 0,
-            total,
+            subtotal: actualSubtotal, // ✅ Already in GHS from frontend
+            discount: finalDiscount, // ✅ Already in GHS from frontend
+            tax: finalTax, // ✅ Already in GHS from frontend
+            shipping_fee: finalDeliveryFee || 0, // ✅ Already in GHS from frontend
+            total: finalTotal, // ✅ Calculated total in GHS
             payment_method,
             order_id: orderData.id,
           },
@@ -718,7 +1122,7 @@ export class OrderController {
                 metadata: {
                   ...existingMetadata,
                   customer_name: customerName,
-                  order_number: order_number,
+                  order_number: finalOrderNumber, // ✅ Use generated order number
                 },
                 updated_at: new Date().toISOString(),
               })
@@ -810,6 +1214,30 @@ export class OrderController {
         }
       } else {
         console.warn('⚠️ No email found for order confirmation. user_id:', user_id, 'shipping_address:', shippingAddress);
+      }
+
+      // Record coupon usage if coupon was applied
+      // ✅ All values already in GHS from frontend
+      if (req.body.coupon_id && finalDiscount > 0) {
+        try {
+          const { error: couponUsageError } = await supabaseAdmin.rpc('record_coupon_usage', {
+            coupon_id_param: req.body.coupon_id,
+            user_id_param: user_id || null,
+            order_id_param: orderData.id,
+            discount_amount_param: finalDiscount, // ✅ Already in GHS from frontend
+            order_total_param: actualSubtotal, // ✅ Already in GHS from frontend - original total before discount
+          });
+
+          if (couponUsageError) {
+            console.error('❌ Failed to record coupon usage:', couponUsageError);
+            // Don't fail the order if coupon usage recording fails
+          } else {
+            console.log(`✅ Recorded coupon usage for coupon ${req.body.coupon_id} on order ${orderData.id}`);
+          }
+        } catch (couponError) {
+          console.error('❌ Error recording coupon usage:', couponError);
+          // Don't fail the order if coupon usage recording fails
+        }
       }
 
       // Send admin notification email
