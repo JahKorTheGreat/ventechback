@@ -335,9 +335,19 @@ class EnhancedEmailService {
         templatePath = path.join(backendRoot, '..', 'email-templates', 'order-status-update.html');
       }
       
-      // Last resort: try from compiled dist location
+      // Try from compiled dist location (relative to dist/services)
       if (!fs.existsSync(templatePath)) {
         templatePath = path.join(__dirname, '../../../../email-templates/order-status-update.html');
+      }
+      
+      // Try absolute path for VPS deployment (/var/www/ventech/backend/email-templates/)
+      if (!fs.existsSync(templatePath)) {
+        templatePath = '/var/www/ventech/backend/email-templates/order-status-update.html';
+      }
+      
+      // Last resort: try from backend directory relative to dist
+      if (!fs.existsSync(templatePath)) {
+        templatePath = path.join(__dirname, '../../../email-templates/order-status-update.html');
       }
       
       if (!fs.existsSync(templatePath)) {

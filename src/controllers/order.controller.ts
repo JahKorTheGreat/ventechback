@@ -972,10 +972,6 @@ export class OrderController {
                               type: 'alert',
                               title: 'Product Out of Stock',
                               message: `${updatedProduct.name} is now out of stock`,
-                              data: {
-                                product_id: item.product_id,
-                                product_name: updatedProduct.name,
-                              },
                               is_read: false,
                             });
                           
