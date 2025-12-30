@@ -488,12 +488,18 @@ export class OrderController {
           // Logged-in user
           customerEmail = orderData.user.email;
           customerName = `${orderData.user.first_name || ''} ${orderData.user.last_name || ''}`.trim() || 'Customer';
+        } else if (orderData.customer_bio && orderData.customer_bio.email) {
+          // Guest customer - use email from customer_bio
+          customerEmail = orderData.customer_bio.email;
+          customerName = orderData.customer_bio.name || 'Guest Customer';
         } else if (orderData.shipping_address && (orderData.shipping_address as any)?.email) {
-          // Guest checkout - get email from shipping address
+          // Legacy: Guest checkout - get email from shipping address (fallback)
           customerEmail = (orderData.shipping_address as any).email;
           customerName = orderData.shipping_address?.full_name || orderData.shipping_address?.first_name || 'Guest Customer';
         }
 
+        // Send cancellation email to CUSTOMER (logged-in or guest)
+        // Recipient email is not stored, so only customer gets email
         if (customerEmail) {
           const emailData = {
             ...orderData,
@@ -507,7 +513,7 @@ export class OrderController {
           if (emailResult.skipped) {
             console.log(`Order cancellation email skipped: ${emailResult.reason}`);
           } else if (emailResult.success) {
-            console.log('Order cancellation email sent successfully');
+            console.log('Order cancellation email sent successfully to customer');
           } else {
             console.error('Failed to send order cancellation email:', emailResult.reason);
           }
@@ -603,6 +609,7 @@ export class OrderController {
         total,
         payment_method,
         delivery_address,
+        customer_bio, // Customer bio information (name, email, phone)
         order_items,
         notes,
         payment_reference,
@@ -836,6 +843,7 @@ export class OrderController {
           // Only include payment_reference if provided (store in shipping_address JSON)
           ...(payment_reference ? { payment_reference } : {}),
         } : null,
+        customer_bio: customer_bio || null, // Store customer bio information
         notes: is_pre_order 
           ? `${notes || ''}\n\n[PRE-ORDER] Shipping: ${pre_order_shipping_option || 'Not specified'}. Estimated Arrival: ${estimated_arrival_date ? new Date(estimated_arrival_date).toLocaleDateString() : 'TBD'}`.trim()
           : (notes || null),
@@ -1168,16 +1176,19 @@ export class OrderController {
         // Logged-in user
         customerEmail = userData.email;
         customerName = userData.full_name || `${userData.first_name || ''} ${userData.last_name || ''}`.trim() || 'Customer';
-      } else if (shippingAddress && (shippingAddress as any)?.email) {
-        // Guest checkout - get email from shipping address
-        customerEmail = (shippingAddress as any).email;
-        customerName = shippingAddress?.full_name || shippingAddress?.first_name || 'Guest Customer';
+      } else if (orderData.customer_bio && orderData.customer_bio.email) {
+        // Guest customer - use email from customer_bio
+        customerEmail = orderData.customer_bio.email;
+        customerName = orderData.customer_bio.name || 'Guest Customer';
       }
+      // Note: Recipient email is NOT stored in delivery_address anymore
+      // Only customer (logged-in or guest) receives emails, not recipients
 
-      // Send order confirmation email to customer
+      // Send order confirmation email to CUSTOMER (logged-in or guest)
+      // Recipient email is not stored, so only customer gets email
       if (customerEmail) {
         try {
-          console.log(`📧 Preparing to send order confirmation email to: ${customerEmail}`);
+          console.log(`📧 Preparing to send order confirmation email to customer: ${customerEmail}`);
           const emailData = {
             ...orderData,
             user_id: user_id || null,
@@ -1195,9 +1206,9 @@ export class OrderController {
           if (emailResult.skipped) {
             console.log(`⚠️ Order confirmation email skipped: ${emailResult.reason}`);
           } else if (emailResult.success) {
-            console.log(`✅ Order confirmation email sent successfully to ${customerEmail}`);
+            console.log(`✅ Order confirmation email sent successfully to customer ${customerEmail}`);
           } else {
-            console.error(`❌ Failed to send order confirmation email to ${customerEmail}:`, emailResult.reason);
+            console.error(`❌ Failed to send order confirmation email to customer ${customerEmail}:`, emailResult.reason);
           }
         } catch (emailError: any) {
           console.error('❌ Error sending order confirmation email:', {
@@ -1209,7 +1220,7 @@ export class OrderController {
           // Don't fail the request if email fails
         }
       } else {
-        console.warn('⚠️ No email found for order confirmation. user_id:', user_id, 'shipping_address:', shippingAddress);
+        console.warn('⚠️ No customer email found for order confirmation. user_id:', user_id, 'customer_bio:', orderData.customer_bio);
       }
 
       // Record coupon usage if coupon was applied
@@ -1241,8 +1252,8 @@ export class OrderController {
         console.log('📧 Sending admin order notification email to ventechgadgets@gmail.com');
         const emailData = {
           ...orderData,
-          customer_name: userData?.full_name || shippingAddress?.full_name || 'Guest Customer',
-          customer_email: userData?.email || (shippingAddress as any)?.email || 'No email',
+          customer_name: userData?.full_name || orderData.customer_bio?.name || shippingAddress?.recipient_name || 'Guest Customer',
+          customer_email: userData?.email || orderData.customer_bio?.email || 'No email', // Customer email (logged-in or guest), not recipient email
           items: orderItems,
           notes: orderData.notes || null,
           delivery_address: shippingAddress, // Keep for email template compatibility
@@ -1484,12 +1495,13 @@ export class OrderController {
       const preOrderShippingOption = orderData.pre_order_shipping_option || orderData.shipping_address?.pre_order_shipping_option || null;
       const estimatedArrivalDate = orderData.estimated_arrival_date || orderData.shipping_address?.estimated_arrival_date || null;
 
-      // Add pre-order fields to the order data for PDF
+      // Add pre-order fields and customer_bio to the order data for PDF
       const orderDataForPDF = {
         ...orderData,
         is_pre_order: isPreOrder,
         pre_order_shipping_option: preOrderShippingOption,
         estimated_arrival_date: estimatedArrivalDate,
+        customer_bio: orderData.customer_bio || null, // Include customer_bio for PDF
       };
 
       // Debug: Log order data before PDF generation

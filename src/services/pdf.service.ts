@@ -17,6 +17,11 @@ interface OrderData {
   total: number;
   shipping_address?: any;
   delivery_address?: any; // Legacy support
+  customer_bio?: {
+    name: string;
+    email: string;
+    phone: string;
+  };
   is_pre_order?: boolean;
   pre_order_shipping_option?: string;
   estimated_arrival_date?: string;
@@ -350,12 +355,19 @@ class PDFService {
 
     const contentY = y + 28; // Reduced from 40
 
-    const customerName = orderData.user 
-      ? `${orderData.user.first_name || ''} ${orderData.user.last_name || ''}`.trim() || 'Unknown'
-      : (orderData.shipping_address?.full_name || orderData.delivery_address?.full_name || 'Guest Customer');
+    // Use customer_bio if available, otherwise fall back to user or shipping_address
+    const customerName = orderData.customer_bio?.name 
+      || (orderData.user 
+        ? `${orderData.user.first_name || ''} ${orderData.user.last_name || ''}`.trim() || 'Unknown'
+        : (orderData.shipping_address?.full_name || orderData.delivery_address?.full_name || 'Guest Customer'));
     
-    const customerEmail = orderData.user?.email || orderData.shipping_address?.email || orderData.delivery_address?.email || 'No email';
-    const address = orderData.shipping_address || orderData.delivery_address;
+    const customerEmail = orderData.customer_bio?.email 
+      || orderData.user?.email 
+      || orderData.shipping_address?.email 
+      || orderData.delivery_address?.email 
+      || 'No email';
+    
+    const customerPhone = orderData.customer_bio?.phone || '';
 
     // Customer details with better formatting
     doc.fontSize(8) // Reduced from 9
@@ -374,10 +386,16 @@ class PDFService {
        .text(customerEmail, 50, contentY + 39) // Reduced spacing
        .fontSize(8) // Reduced from 9
        .fillColor('#666666')
-       .text('Delivery Address:', 50, contentY + 56) // Reduced spacing
+       .text('Phone:', 50, contentY + 56) // Reduced spacing
        .fontSize(9) // Reduced from 10
        .fillColor('#1A1A1A')
-       .text(this.formatAddress(address), 50, contentY + 67, { width: 300, lineGap: 2 }); // Reduced spacing and lineGap
+       .text(customerPhone || 'N/A', 50, contentY + 67) // Reduced spacing
+       .fontSize(8) // Reduced from 9
+       .fillColor('#666666')
+       .text('Delivery Details:', 50, contentY + 84) // Reduced spacing
+       .fontSize(9) // Reduced from 10
+       .fillColor('#1A1A1A')
+       .text(this.formatDeliveryDetails(orderData.shipping_address || orderData.delivery_address), 50, contentY + 95, { width: 300, lineGap: 2 }); // Reduced spacing and lineGap
   }
 
   private addOrderItems(doc: any, orderData: OrderData): number {
@@ -587,6 +605,27 @@ class PDFService {
     ].filter(Boolean);
     
     return parts.join(', ');
+  }
+
+  private formatDeliveryDetails(address: any): string {
+    if (typeof address === 'string') return address;
+    if (!address) return 'No delivery details provided';
+    
+    // New delivery structure
+    if (address.gadget_name || address.recipient_name) {
+      const parts: string[] = [];
+      if (address.gadget_name) parts.push(`Gadget: ${address.gadget_name}`);
+      if (address.recipient_name) parts.push(`Recipient: ${address.recipient_name}`);
+      if (address.recipient_number) parts.push(`Phone: ${address.recipient_number}`);
+      if (address.recipient_location) parts.push(`Location: ${address.recipient_location}`);
+      if (address.recipient_region) parts.push(`Region: ${address.recipient_region}`);
+      if (address.alternate_contact_number) parts.push(`Alternate: ${address.alternate_contact_number}`);
+      if (address.country) parts.push(address.country);
+      return parts.join('\n');
+    }
+    
+    // Legacy structure (fallback)
+    return this.formatAddress(address);
   }
 }
 
