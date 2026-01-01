@@ -1,0 +1,91 @@
+# Artillery Performance Testing Configuration (with relaxed rate limits)
+# This config is for performance testing - rate limits should be increased or disabled
+# Run with: DISABLE_RATE_LIMIT=true npm run dev (in backend)
+# Then: npx artillery run artillery-performance.yml
+
+config:
+  target: 'http://localhost:5000'
+  phases:
+    # Warm-up phase - slower
+    - duration: 30
+      arrivalRate: 2
+      name: "Warm up"
+    
+    # Normal load phase
+    - duration: 60
+      arrivalRate: 10
+      name: "Normal load"
+    
+    # Peak load phase
+    - duration: 30
+      arrivalRate: 20
+      name: "Peak load"
+    
+    # Cool down phase
+    - duration: 30
+      arrivalRate: 5
+      name: "Cool down"
+
+  plugins:
+    expect: {}
+    metrics-by-endpoint: {}
+
+  processor: "./artillery-processor.js"
+
+scenarios:
+  # Product browsing scenario
+  - name: "Browse Products"
+    weight: 40
+    flow:
+      - get:
+          url: "/api/products"
+          # Don't expect 200 during rate limit - accept 429 as valid
+          expect:
+            - statusCode: [200, 429]
+      - think: 2
+      - get:
+          url: "/api/products?page=2"
+          expect:
+            - statusCode: [200, 429]
+      - think: 1
+
+  # Product details scenario
+  - name: "View Product Details"
+    weight: 30
+    flow:
+      - get:
+          url: "/api/products"
+          capture:
+            - json: "$.data[0].slug"
+              as: "productSlug"
+          expect:
+            - statusCode: [200, 429]
+      - think: 1
+      - get:
+          url: "/api/products/{{ productSlug }}"
+          expect:
+            - statusCode: [200, 429]
+
+  # Search scenario
+  - name: "Search Products"
+    weight: 20
+    flow:
+      - get:
+          url: "/api/products?search=laptop"
+          expect:
+            - statusCode: [200, 429]
+      - think: 2
+      - get:
+          url: "/api/products?search=phone"
+          expect:
+            - statusCode: [200, 429]
+
+  # Featured products scenario
+  - name: "View Featured Products"
+    weight: 10
+    flow:
+      - get:
+          url: "/api/products/featured"
+          expect:
+            - statusCode: [200, 429]
+

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import {
   getAllProducts,
   getProductBySlug,
@@ -9,14 +9,28 @@ import {
   getAllCategories,
 } from '../controllers/product.controller';
 import { authenticate, isAdmin } from '../middleware/auth.middleware';
+import { 
+  publicRateLimiter, 
+  productDetailsRateLimiter,
+  searchRateLimiter 
+} from '../middleware/rateLimit.middleware';
 
 const router = Router();
 
-// Public routes
-router.get('/', getAllProducts);
-router.get('/featured', getFeaturedProducts);
-router.get('/categories', getAllCategories);
-router.get('/:slug', getProductBySlug);
+// Middleware to apply search rate limiter if search query is present
+const applySearchRateLimit = (req: Request, res: Response, next: NextFunction) => {
+  if (req.query.search) {
+    return searchRateLimiter(req, res, next);
+  } else {
+    return publicRateLimiter(req, res, next);
+  }
+};
+
+// Public routes with rate limiting
+router.get('/', applySearchRateLimit, getAllProducts);
+router.get('/featured', publicRateLimiter, getFeaturedProducts);
+router.get('/categories', publicRateLimiter, getAllCategories);
+router.get('/:slug', productDetailsRateLimiter, getProductBySlug);
 
 // Admin routes
 router.post('/', authenticate, isAdmin, createProduct);

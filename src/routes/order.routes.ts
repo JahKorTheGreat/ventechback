@@ -1,11 +1,12 @@
 import express from 'express';
 import { OrderController } from '../controllers/order.controller';
+import { orderRateLimiter } from '../middleware/rateLimit.middleware';
 
 const router = express.Router();
 const orderController = new OrderController();
 
 // Track order by number/ID and email (public endpoint)
-router.post('/track', orderController.trackOrder.bind(orderController));
+router.post('/track', orderRateLimiter, orderController.trackOrder.bind(orderController));
 
 // Get all orders (admin only)
 router.get('/', orderController.getAllOrders.bind(orderController));
@@ -23,7 +24,7 @@ router.patch('/:id/payment-status', orderController.updatePaymentStatus.bind(ord
 router.patch('/:id/cancel', orderController.cancelOrder.bind(orderController));
 
 // Create order
-router.post('/', orderController.createOrder.bind(orderController));
+router.post('/', orderRateLimiter, orderController.createOrder.bind(orderController));
 
 // Send wishlist reminder
 router.post('/wishlist-reminder/:user_id', orderController.sendWishlistReminder.bind(orderController));

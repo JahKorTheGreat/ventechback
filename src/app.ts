@@ -16,6 +16,7 @@ import bulkOrderRoutes from './routes/bulkOrder.routes';
 import affiliateRoutes from './routes/affiliate.routes';
 import couponRoutes from './routes/coupon.routes';
 import { errorHandler, notFound } from './middleware/error.middleware';
+import { publicRateLimiter } from './middleware/rateLimit.middleware';
 
 const app: Application = express();
 
@@ -47,18 +48,19 @@ app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'VENTECH API is running' });
 });
 
-// API Routes
+// API Routes with rate limiting
+// Note: Individual routes have specific rate limiters applied
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/transactions', transactionRoutes);
-app.use('/api/banners', bannerRoutes);
-app.use('/api/investment', investmentRoutes);
+app.use('/api/banners', publicRateLimiter, bannerRoutes);
+app.use('/api/investment', publicRateLimiter, investmentRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/bulk-orders', bulkOrderRoutes);
-app.use('/api/affiliate', affiliateRoutes);
-app.use('/api/coupons', couponRoutes);
+app.use('/api/affiliate', publicRateLimiter, affiliateRoutes);
+app.use('/api/coupons', publicRateLimiter, couponRoutes);
 
 // Error handling
 app.use(notFound);

@@ -23,52 +23,111 @@ export const getAllProducts = async (req: Request, res: Response) => {
     const limitNum = parseInt(limit as string);
     const offset = (pageNum - 1) * limitNum;
 
+    // Select products with category relationship
+    // Note: count: 'exact' with relationships can cause corrupted errors, so we'll get count separately
     let query = supabaseAdmin
       .from('products')
-      .select('*, category:categories(name, slug)', { count: 'exact' });
+      .select('*, category:categories(name, slug)');
+    
+    // Create a separate count query without relationships to avoid corruption
+    let countQuery = supabaseAdmin
+      .from('products')
+      .select('*', { count: 'exact', head: true });
 
-    // Apply filters
+    // Apply filters to both queries
     if (category) {
       query = query.eq('category_id', category);
+      countQuery = countQuery.eq('category_id', category);
     }
 
     if (brand) {
-      const brands = (brand as string).split(',');
-      query = query.in('brand', brands);
+      // Brand filter - can filter by brand name (text) or brand_id (UUID)
+      const brands = (brand as string).split(',').map(b => b.trim());
+      // Try to match as UUIDs first (brand_id), otherwise treat as brand names
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (brands.every(b => isUUID.test(b))) {
+        // All are UUIDs, filter by brand_id
+        query = query.in('brand_id', brands);
+        countQuery = countQuery.in('brand_id', brands);
+      } else {
+        // Treat as brand names - look up brand IDs from brands table
+        // This avoids errors if brand column doesn't exist in products table
+        const { data: brandData, error: brandError } = await supabaseAdmin
+          .from('brands')
+          .select('id')
+          .in('name', brands);
+        
+        if (brandError || !brandData || brandData.length === 0) {
+          // No brands found or error - return empty result by filtering with non-existent ID
+          query = query.eq('id', '00000000-0000-0000-0000-000000000000');
+          countQuery = countQuery.eq('id', '00000000-0000-0000-0000-000000000000');
+        } else {
+          const brandIds = brandData.map(b => b.id);
+          query = query.in('brand_id', brandIds);
+          countQuery = countQuery.in('brand_id', brandIds);
+        }
+      }
     }
 
     if (minPrice) {
       query = query.gte('discount_price', parseFloat(minPrice as string));
+      countQuery = countQuery.gte('discount_price', parseFloat(minPrice as string));
     }
 
     if (maxPrice) {
       query = query.lte('discount_price', parseFloat(maxPrice as string));
+      countQuery = countQuery.lte('discount_price', parseFloat(maxPrice as string));
     }
 
     if (inStock === 'true') {
       query = query.eq('in_stock', true).gt('stock_quantity', 0);
+      countQuery = countQuery.eq('in_stock', true).gt('stock_quantity', 0);
     }
 
     if (rating) {
       query = query.gte('rating', parseFloat(rating as string));
+      countQuery = countQuery.gte('rating', parseFloat(rating as string));
     }
 
     if (search) {
-      query = query.or(
-        `name.ilike.%${search}%,description.ilike.%${search}%,brand.ilike.%${search}%`
-      );
+      // Search in name and description
+      // Note: Brand search requires brand column to exist (run migration if needed)
+      // For now, search only in name and description to avoid errors
+      const searchFilter = `name.ilike.%${search}%,description.ilike.%${search}%`;
+      query = query.or(searchFilter);
+      countQuery = countQuery.or(searchFilter);
+      // TODO: Add brand search after migration: `,brand.ilike.%${search}%`
     }
 
     // Apply sorting
     const ascending = sortOrder === 'asc';
     query = query.order(sortBy as string, { ascending });
 
-    // Apply pagination
+    // Apply pagination (only to data query, not count query)
     query = query.range(offset, offset + limitNum - 1);
 
-    const { data, error, count } = await query;
+    // Execute both queries in parallel
+    const [result, countResult] = await Promise.all([
+      query,
+      countQuery
+    ]);
 
-    if (error) throw error;
+    // Handle errors - check both queries
+    if (result.error) {
+      const error = result.error;
+      console.error('Data query error:', error);
+      throw error;
+    }
+
+    if (countResult.error) {
+      const error = countResult.error;
+      console.error('Count query error:', error);
+      // If count fails, we can still return data with count = 0 or data.length
+      console.warn('Count query failed, using data length as fallback');
+    }
+
+    const { data } = result;
+    const count = countResult.count ?? data?.length ?? 0;
 
     return paginatedResponse(res, data || [], {
       page: pageNum,
@@ -77,8 +136,57 @@ export const getAllProducts = async (req: Request, res: Response) => {
       totalPages: Math.ceil((count || 0) / limitNum),
     });
   } catch (error: any) {
-    console.error('Get products error:', error);
-    return errorResponse(res, error.message);
+    console.error('Get products error - Full error object:', error);
+    console.error('Get products error - Error type:', typeof error);
+    console.error('Get products error - Error message:', error?.message);
+    console.error('Get products error - Error details:', error?.details);
+    console.error('Get products error - Error hint:', error?.hint);
+    console.error('Get products error - Error code:', error?.code);
+    
+    // Extract error message properly - prioritize details/hint over message
+    let errorMessage = 'Failed to fetch products';
+    
+    if (error) {
+      // Prefer details or hint as they're usually more descriptive and less likely to be double-encoded
+      if (error.details && typeof error.details === 'string') {
+        errorMessage = error.details;
+      } else if (error.hint && typeof error.hint === 'string') {
+        errorMessage = error.hint;
+      } 
+      // Then try message
+      else if (error.message) {
+        const msg = String(error.message);
+        // If message looks like JSON, try to parse it
+        const trimmedMsg = msg.trim();
+        if (trimmedMsg.startsWith('{') || trimmedMsg.startsWith('[')) {
+          try {
+            const parsed = JSON.parse(msg);
+            errorMessage = parsed.message || parsed.details || parsed.hint || msg;
+          } catch (e) {
+            // If parsing fails, use the message as-is but truncate if too long
+            errorMessage = msg.length > 200 ? msg.substring(0, 200) + '...' : msg;
+          }
+        } else {
+          errorMessage = msg;
+        }
+      } 
+      // Some errors might be strings
+      else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+      // Last resort: create a safe string representation
+      else {
+        try {
+          // Only stringify if it's a plain object, avoid circular references
+          const errorStr = JSON.stringify(error, Object.getOwnPropertyNames(error));
+          errorMessage = errorStr.length > 200 ? errorStr.substring(0, 200) + '...' : errorStr;
+        } catch (e) {
+          errorMessage = String(error);
+        }
+      }
+    }
+    
+    return errorResponse(res, errorMessage);
   }
 };
 
@@ -104,25 +212,104 @@ export const getProductBySlug = async (req: Request, res: Response) => {
   }
 };
 
+// In-memory cache for featured products
+// In production, consider using Redis for distributed caching
+interface FeaturedProductsCache {
+  data: any[] | null;
+  timestamp: number | null;
+  limit: number;
+}
+
+const featuredProductsCache: FeaturedProductsCache = {
+  data: null,
+  timestamp: null,
+  limit: 8,
+};
+
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes in milliseconds
+
+// Determine which featured column name to use (check once at startup)
+let featuredColumnName: 'featured' | 'is_featured' | null = null;
+
+const detectFeaturedColumn = async (): Promise<'featured' | 'is_featured'> => {
+  if (featuredColumnName) return featuredColumnName;
+
+  // Try 'featured' first
+  const { error } = await supabaseAdmin
+    .from('products')
+    .select('featured')
+    .limit(1);
+
+  if (!error) {
+    featuredColumnName = 'featured';
+    return 'featured';
+  }
+
+  // Fallback to 'is_featured'
+  featuredColumnName = 'is_featured';
+  return 'is_featured';
+};
+
 export const getFeaturedProducts = async (req: Request, res: Response) => {
   try {
-    const { limit = 8 } = req.query;
+    const limit = parseInt((req.query.limit as string) || '8');
+    const now = Date.now();
 
+    // Check cache first
+    if (
+      featuredProductsCache.data &&
+      featuredProductsCache.timestamp &&
+      featuredProductsCache.limit === limit &&
+      (now - featuredProductsCache.timestamp) < CACHE_TTL
+    ) {
+      console.log('Serving featured products from cache');
+      return successResponse(res, featuredProductsCache.data);
+    }
+
+    // Detect which column name to use (only once)
+    const columnName = await detectFeaturedColumn();
+
+    // Optimized query: select only needed columns, use composite index
+    // The index idx_products_featured_in_stock_created should cover this query
     const { data, error } = await supabaseAdmin
       .from('products')
-      .select('*')
-      .eq('featured', true)
+      .select(
+        'id, name, slug, description, thumbnail, images, original_price, discount_price, rating, review_count, in_stock, stock_quantity, created_at, updated_at, category_id, brand_id'
+      )
+      .eq(columnName, true)
       .eq('in_stock', true)
-      .limit(parseInt(limit as string))
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Get featured products error:', error);
+      throw error;
+    }
+
+    // Update cache
+    featuredProductsCache.data = data || [];
+    featuredProductsCache.timestamp = now;
+    featuredProductsCache.limit = limit;
 
     return successResponse(res, data || []);
   } catch (error: any) {
     console.error('Get featured products error:', error);
-    return errorResponse(res, error.message);
+    // Extract error message properly
+    let errorMessage = 'Failed to fetch featured products';
+    if (error?.message) {
+      errorMessage = typeof error.message === 'string' ? error.message : String(error.message);
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+    return errorResponse(res, errorMessage);
   }
+};
+
+// Helper function to invalidate cache (call this when products are updated)
+export const invalidateFeaturedProductsCache = () => {
+  featuredProductsCache.data = null;
+  featuredProductsCache.timestamp = null;
+  console.log('Featured products cache invalidated');
 };
 
 export const createProduct = async (req: AuthRequest, res: Response) => {
@@ -137,10 +324,16 @@ export const createProduct = async (req: AuthRequest, res: Response) => {
 
     if (error) throw error;
 
+    // Invalidate featured products cache if new product is featured
+    if (productData.featured === true || productData.is_featured === true) {
+      invalidateFeaturedProductsCache();
+    }
+
     return successResponse(res, data, 'Product created successfully', 201);
   } catch (error: any) {
     console.error('Create product error:', error);
-    return errorResponse(res, error.message);
+    const errorMessage = error?.message || (typeof error === 'string' ? error : 'Failed to create product');
+    return errorResponse(res, typeof errorMessage === 'string' ? errorMessage : String(errorMessage));
   }
 };
 
@@ -167,10 +360,22 @@ export const updateProduct = async (req: AuthRequest, res: Response) => {
       return errorResponse(res, 'Product not found', 404);
     }
 
+    // Invalidate featured products cache if featured status, stock status, or created_at changed
+    if (
+      updates.featured !== undefined ||
+      updates.is_featured !== undefined ||
+      updates.in_stock !== undefined ||
+      updates.stock_quantity !== undefined ||
+      updates.created_at !== undefined
+    ) {
+      invalidateFeaturedProductsCache();
+    }
+
     return successResponse(res, data, 'Product updated successfully');
   } catch (error: any) {
     console.error('Update product error:', error);
-    return errorResponse(res, error.message);
+    const errorMessage = error?.message || (typeof error === 'string' ? error : 'Failed to update product');
+    return errorResponse(res, typeof errorMessage === 'string' ? errorMessage : String(errorMessage));
   }
 };
 
@@ -178,14 +383,27 @@ export const deleteProduct = async (req: AuthRequest, res: Response) => {
   try {
     const { id } = req.params;
 
+    // Check if product is featured before deleting (to invalidate cache if needed)
+    const { data: product } = await supabaseAdmin
+      .from('products')
+      .select('featured, is_featured')
+      .eq('id', id)
+      .single();
+
     const { error } = await supabaseAdmin.from('products').delete().eq('id', id);
 
     if (error) throw error;
 
+    // Invalidate cache if deleted product was featured
+    if (product && (product.featured === true || product.is_featured === true)) {
+      invalidateFeaturedProductsCache();
+    }
+
     return successResponse(res, null, 'Product deleted successfully');
   } catch (error: any) {
     console.error('Delete product error:', error);
-    return errorResponse(res, error.message);
+    const errorMessage = error?.message || (typeof error === 'string' ? error : 'Failed to delete product');
+    return errorResponse(res, typeof errorMessage === 'string' ? errorMessage : String(errorMessage));
   }
 };
 
@@ -201,7 +419,8 @@ export const getAllCategories = async (req: Request, res: Response) => {
     return successResponse(res, data || []);
   } catch (error: any) {
     console.error('Get categories error:', error);
-    return errorResponse(res, error.message);
+    const errorMessage = error?.message || (typeof error === 'string' ? error : 'Failed to fetch categories');
+    return errorResponse(res, typeof errorMessage === 'string' ? errorMessage : String(errorMessage));
   }
 };
 

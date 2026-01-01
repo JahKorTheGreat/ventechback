@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { uploadSingle, uploadMultiple } from '../middleware/upload.middleware';
 import { uploadToR2, uploadMultipleToR2, deleteFromR2, listR2Files } from '../services/r2.service';
+import { uploadRateLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
 
@@ -9,7 +10,7 @@ const router = Router();
  * POST /api/upload/single
  * Upload a single image
  */
-router.post('/', uploadSingle, async (req: Request, res: Response) => {
+router.post('/', uploadRateLimiter, uploadSingle, async (req: Request, res: Response) => {
   // This handles /api/upload requests
   try {
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
@@ -50,7 +51,7 @@ router.post('/', uploadSingle, async (req: Request, res: Response) => {
   }
 });
 
-router.post('/single', uploadSingle, async (req: Request, res: Response) => {
+router.post('/single', uploadRateLimiter, uploadSingle, async (req: Request, res: Response) => {
   try {
     const files = req.files as { [fieldname: string]: Express.Multer.File[] };
     // Get file from either 'file' or 'image' field
@@ -94,7 +95,7 @@ router.post('/single', uploadSingle, async (req: Request, res: Response) => {
  * POST /api/upload/multiple
  * Upload multiple images
  */
-router.post('/multiple', uploadMultiple, async (req: Request, res: Response) => {
+router.post('/multiple', uploadRateLimiter, uploadMultiple, async (req: Request, res: Response) => {
   try {
     const files = req.files as Express.Multer.File[];
 

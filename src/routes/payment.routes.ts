@@ -1,14 +1,15 @@
 import express from 'express';
 import { PaymentController } from '../controllers/payment.controller';
+import { paymentRateLimiter } from '../middleware/rateLimit.middleware';
 
 const router = express.Router();
 const paymentController = new PaymentController();
 
 // Initialize Paystack transaction
-router.post('/initialize', paymentController.initializeTransaction);
+router.post('/initialize', paymentRateLimiter, paymentController.initializeTransaction);
 
 // Verify Paystack transaction
-router.post('/verify', paymentController.verifyTransaction);
+router.post('/verify', paymentRateLimiter, paymentController.verifyTransaction);
 
 // Paystack webhook (for automatic order creation)
 router.post('/webhook', paymentController.handleWebhook);

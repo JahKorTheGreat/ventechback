@@ -1,0 +1,88 @@
+# Artillery Performance Testing Configuration
+# Run with: npx artillery run artillery.yml
+
+config:
+  target: 'http://localhost:5000'
+  # Note: For performance testing, set DISABLE_RATE_LIMIT=true in backend .env
+  # Or increase rate limits significantly
+  phases:
+    # Warm-up phase
+    - duration: 30
+      arrivalRate: 2
+      name: "Warm up"
+    
+    # Normal load phase
+    - duration: 60
+      arrivalRate: 10
+      name: "Normal load"
+    
+    # Peak load phase
+    - duration: 30
+      arrivalRate: 20
+      name: "Peak load"
+    
+    # Cool down phase
+    - duration: 30
+      arrivalRate: 5
+      name: "Cool down"
+
+  plugins:
+    expect: {}
+    metrics-by-endpoint: {}
+
+  processor: "./artillery-processor.js"
+
+scenarios:
+  # Product browsing scenario
+  - name: "Browse Products"
+    weight: 40
+    flow:
+      - get:
+          url: "/api/products"
+          expect:
+            - statusCode: 200
+      - think: 2
+      - get:
+          url: "/api/products?page=2"
+          expect:
+            - statusCode: 200
+      - think: 1
+
+  # Product details scenario
+  - name: "View Product Details"
+    weight: 30
+    flow:
+      - get:
+          url: "/api/products"
+          capture:
+            - json: "$.data[0].slug"
+              as: "productSlug"
+      - think: 1
+      - get:
+          url: "/api/products/{{ productSlug }}"
+          expect:
+            - statusCode: 200
+
+  # Search scenario
+  - name: "Search Products"
+    weight: 20
+    flow:
+      - get:
+          url: "/api/products?search=laptop"
+          expect:
+            - statusCode: 200
+      - think: 2
+      - get:
+          url: "/api/products?search=phone"
+          expect:
+            - statusCode: 200
+
+  # Featured products scenario
+  - name: "View Featured Products"
+    weight: 10
+    flow:
+      - get:
+          url: "/api/products/featured"
+          expect:
+            - statusCode: 200
+
