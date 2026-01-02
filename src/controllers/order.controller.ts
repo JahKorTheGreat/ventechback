@@ -1364,11 +1364,7 @@ export class OrderController {
             type: 'order',
             title: `New Order: ${orderData.order_number}`,
             message: `New order received from ${userData?.full_name || shippingAddress?.full_name || 'Guest Customer'}. Total: GHS ${orderData.total.toFixed(2)}`,
-            data: {
-              order_id: orderData.id,
-              order_number: orderData.order_number,
-              customer_name: userData?.full_name || shippingAddress?.full_name || 'Guest',
-            },
+            action_url: `/admin/orders/${orderData.id}`,
             is_read: false,
           }]);
 

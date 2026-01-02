@@ -5,8 +5,7 @@ import { AuthRequest } from '../middleware/auth.middleware';
 
 export const getBannersByType = async (req: Request, res: Response) => {
   try {
-    const { type } = req.params;
-    const currentDate = new Date().toISOString();
+    const { type } = req.params; // Type parameter is ignored since banners table doesn't have a 'type' column
 
     // Build query - banners table doesn't have a 'type' column
     // Return all active banners (the 'type' parameter is ignored since column doesn't exist)
@@ -15,57 +14,61 @@ export const getBannersByType = async (req: Request, res: Response) => {
       .select('*')
       .eq('active', true);
 
-    // Try to add date filters if columns exist
-    try {
-      query = query.or(`start_date.is.null,start_date.lte.${currentDate}`);
-      query = query.or(`end_date.is.null,end_date.gte.${currentDate}`);
-    } catch (dateError: any) {
-      // Date columns might not exist, skip date filtering
-      if (dateError?.code !== '42703') {
-        console.warn('Date filtering skipped - columns may not exist');
-      }
-    }
-
     // Try to order by 'order' column (quoted because it's a reserved keyword)
+    // Use a simpler approach - just try the most common column name
+    // If it fails, the query will still work without ordering
     try {
       query = query.order('order', { ascending: true });
     } catch (orderError: any) {
       // If ordering fails, try alternative column names
-      if (orderError?.code === '42703') {
-        // Column doesn't exist, try alternatives
+      if (orderError?.code === '42703' || orderError?.message?.includes('column')) {
         try {
           query = query.order('position', { ascending: true });
         } catch (positionError: any) {
-          if (positionError?.code === '42703') {
+          if (positionError?.code === '42703' || positionError?.message?.includes('column')) {
             try {
               query = query.order('display_order', { ascending: true });
             } catch (displayOrderError: any) {
-              if (displayOrderError?.code === '42703') {
-                try {
-                  query = query.order('sort_order', { ascending: true });
-                } catch (sortOrderError: any) {
-                  // If all ordering fails, just get the data without ordering
-                  console.warn('Could not order banners, using unordered results');
-                }
-              }
+              // If all ordering fails, just get the data without ordering
+              console.warn('Could not order banners, using unordered results');
             }
           }
         }
       } else {
-        console.warn('Could not order banners:', orderError);
+        console.warn('Could not order banners:', orderError?.message || orderError);
       }
     }
 
     const { data, error } = await query;
 
-    if (error) throw error;
+    if (error) {
+      // Provide more detailed error information
+      const errorDetails = {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      };
+      console.error('Get banners error:', errorDetails);
+      throw new Error(`Failed to fetch banners: ${error.message || 'Unknown error'}`);
+    }
 
     // Return all active banners (no type column to filter by)
     // The frontend can filter by type client-side if needed
     return successResponse(res, data || []);
   } catch (error: any) {
-    console.error('Get banners error:', error);
-    return errorResponse(res, error.message);
+    // Improved error handling
+    const errorMessage = error?.message || 'Failed to fetch banners';
+    const errorDetails = error?.details || error?.stack || '';
+    
+    console.error('Get banners error:', {
+      message: errorMessage,
+      details: errorDetails,
+      hint: error?.hint || '',
+      code: error?.code || '',
+    });
+    
+    return errorResponse(res, errorMessage);
   }
 };
 
