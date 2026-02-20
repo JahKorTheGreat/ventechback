@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { supabaseAdmin } from '../utils/supabaseClient';
 import enhancedEmailService from '../services/enhanced-email.service';
 import pdfService from '../services/pdf.service';
+import affiliateService from '../services/affiliate.service';
 
 export class OrderController {
   // Get all orders (admin)
@@ -1385,6 +1386,40 @@ export class OrderController {
         email_sent: true, // Email is sent above
         stock_updated: true, // Stock is updated above
       });
+
+      // ✅ Track affiliate commission if referral code or referred user is provided
+      // This is a standalone process that should not block order creation
+      try {
+        const referralCode = req.body.referral_code || req.query.ref;
+        const referredUserId = req.body.referred_user_id;
+
+        if (referralCode || referredUserId) {
+          const commission = await affiliateService.trackOrderFromReferral(
+            orderData.id,
+            referralCode as string,
+            referredUserId as string
+          );
+
+          if (commission) {
+            console.log('✅ Affiliate commission tracked:', {
+              commission_id: commission.id,
+              affiliate_id: commission.affiliate_id,
+              commission_amount: commission.commission_amount,
+              commission_rate: commission.commission_rate,
+            });
+            // Add commission info to response data
+            (orderData as any).affiliate_commission = commission;
+          } else {
+            console.log('ℹ️ No affiliate commission created for this order (invalid referral or inactive affiliate)');
+          }
+        }
+      } catch (affiliateError) {
+        // Log error but don't fail order creation
+        console.error('⚠️ Error tracking affiliate commission:', {
+          error: affiliateError instanceof Error ? affiliateError.message : 'Unknown error',
+          order_id: orderData.id,
+        });
+      }
 
       res.json({
         success: true,

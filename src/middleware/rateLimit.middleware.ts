@@ -156,6 +156,21 @@ export const adminRateLimiter = rateLimit({
 });
 
 /**
+ * Affiliate Rate Limiter
+ * - Affiliate operations, dashboard access
+ * - 30 requests per minute per affiliate
+ */
+export const affiliateRateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 30, // 30 requests per window
+  message: 'Too many affiliate requests, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: standardHandler,
+  keyGenerator: getIdentifier,
+});
+
+/**
  * Contact/Bulk Order Rate Limiter
  * - Contact form, bulk order requests
  * - 5 requests per hour per IP
@@ -168,4 +183,3 @@ export const contactRateLimiter = rateLimit({
   legacyHeaders: false,
   handler: standardHandler,
 });
-

@@ -873,5 +873,319 @@ class EnhancedEmailService {
   }
 }
 
+  /**
+   * Send affiliate approval email
+   */
+  async sendAffiliateApprovalEmail(
+    email: string,
+    data: { fullName: string; referralCode: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || 'https://ventechgadgets.com';
+      const affiliateDashboardUrl = `${siteUrl}/affiliate/dashboard`;
+      const referralLinkExample = `${siteUrl}?ref=${data.referralCode}`;
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+            .content { padding: 30px; }
+            .code-box { background: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0; font-family: monospace; text-align: center; font-weight: bold; color: #667eea; font-size: 18px; }
+            .button { background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }
+            .footer { background: #f5f5f5; padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #ddd; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Welcome to VENTECH Affiliate Program! 🎉</h1>
+            </div>
+            <div class="content">
+              <p>Hi ${data.fullName},</p>
+              
+              <p>Great news! Your affiliate application has been <strong>approved</strong>. You're now officially a VENTECH affiliate partner!</p>
+              
+              <h3>Getting Started</h3>
+              <p>Your unique referral code is:</p>
+              <div class="code-box">${data.referralCode}</div>
+              
+              <p>Use this code to track customer referrals and earn commissions. For example:</p>
+              <ul>
+                <li>Share: ${referralLinkExample}</li>
+                <li>Or use code: ${data.referralCode} at checkout</li>
+              </ul>
+              
+              <h3>Earning Commissions</h3>
+              <ul>
+                <li><strong>Bronze Tier (0-99 orders):</strong> 3% commission</li>
+                <li><strong>Silver Tier (100-499 orders):</strong> 5% commission</li>
+                <li><strong>Gold Tier (500+ orders):</strong> 7% commission</li>
+              </ul>
+              
+              <p>Commissions are earned when your referrals place orders, and paid out monthly once your balance exceeds GHS 50.</p>
+              
+              <a href="${affiliateDashboardUrl}" class="button">Access Your Dashboard</a>
+              
+              <p>Questions? Feel free to reach out to our affiliate support team at ventechgadgets@gmail.com</p>
+              
+              <p>Happy promoting!<br><strong>VENTECH Team</strong></p>
+            </div>
+            <div class="footer">
+              <p>VENTECH Gadgets - Your Trusted Tech Partner</p>
+              <p>Email: ventechgadgets@gmail.com | Phone: +233 55 134 4310</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const success = await this.sendEmail({
+        to: email,
+        subject: 'Welcome to VENTECH Affiliate Program - Account Approved! 🎉',
+        html,
+      }, true);
+
+      return { success };
+    } catch (error) {
+      console.error('Error sending affiliate approval email:', error);
+      return { success: false, error: 'Failed to send approval email' };
+    }
+  }
+
+  /**
+   * Send affiliate rejection email
+   */
+  async sendAffiliateRejectionEmail(
+    email: string,
+    data: { fullName: string; rejectionReason: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+            .header { background: #f8f9fa; padding: 30px; text-align: center; border-bottom: 3px solid #e0e0e0; }
+            .content { padding: 30px; }
+            .reason-box { background: #fff3cd; padding: 15px; border-radius: 5px; border-left: 4px solid #ffc107; margin: 20px 0; }
+            .footer { background: #f5f5f5; padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #ddd; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h2>Affiliate Application Status</h2>
+            </div>
+            <div class="content">
+              <p>Hi ${data.fullName},</p>
+              
+              <p>Thank you for your interest in joining the VENTECH Affiliate Program. After careful review, we're unable to proceed with your application at this time.</p>
+              
+              <h3>Reason for Rejection</h3>
+              <div class="reason-box">
+                ${data.rejectionReason}
+              </div>
+              
+              <p>We encourage you to stay in touch! If you'd like to reapply in the future or have questions, please don't hesitate to contact us at ventechgadgets@gmail.com</p>
+              
+              <p>Best regards,<br><strong>VENTECH Team</strong></p>
+            </div>
+            <div class="footer">
+              <p>VENTECH Gadgets - Your Trusted Tech Partner</p>
+              <p>Email: ventechgadgets@gmail.com | Phone: +233 55 134 4310</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const success = await this.sendEmail({
+        to: email,
+        subject: 'Affiliate Application - Status Update',
+        html,
+      }, true);
+
+      return { success };
+    } catch (error) {
+      console.error('Error sending affiliate rejection email:', error);
+      return { success: false, error: 'Failed to send rejection email' };
+    }
+  }
+
+  /**
+   * Send commission earned notification
+   */
+  async sendCommissionEarnedEmail(
+    email: string,
+    data: { fullName: string; amount: number; orderNumber: string; commissionRate: number }
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.SITE_URL || 'https://ventechgadgets.com';
+      const dashboardUrl = `${siteUrl}/affiliate/dashboard`;
+      const formattedAmount = `GHS ${data.amount.toFixed(2)}`;
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+            .header { background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; padding: 30px; text-align: center; }
+            .content { padding: 30px; }
+            .earnings-box { background: #f0fdf4; padding: 20px; border-radius: 5px; border: 2px solid #10b981; margin: 20px 0; text-align: center; }
+            .earnings-amount { font-size: 32px; font-weight: bold; color: #10b981; }
+            .earnings-label { font-size: 14px; color: #666; margin-top: 5px; }
+            .button { background: #10b981; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0; }
+            .footer { background: #f5f5f5; padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #ddd; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Great News! Commission Earned ✅</h1>
+            </div>
+            <div class="content">
+              <p>Hi ${data.fullName},</p>
+              
+              <p>A customer from your referral has completed their purchase! You've earned a commission.</p>
+              
+              <div class="earnings-box">
+                <div class="earnings-amount">${formattedAmount}</div>
+                <div class="earnings-label">Commission Earned</div>
+                <p style="margin: 10px 0 0 0; font-size: 12px; color: #666;">Order: ${data.orderNumber} | Rate: ${data.commissionRate}%</p>
+              </div>
+              
+              <p>This commission has been added to your account and will be available for payout. View all your earnings and request payouts from your dashboard:</p>
+              
+              <a href="${dashboardUrl}" class="button">View Earnings Dashboard</a>
+              
+              <p>Keep up the great work! The more customers you refer, the higher your commission tier becomes (up to 7%).</p>
+              
+              <p>Best regards,<br><strong>VENTECH Team</strong></p>
+            </div>
+            <div class="footer">
+              <p>VENTECH Gadgets - Your Trusted Tech Partner</p>
+              <p>Email: ventechgadgets@gmail.com | Phone: +233 55 134 4310</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const success = await this.sendEmail({
+        to: email,
+        subject: `Commission Earned: ${formattedAmount} ✅`,
+        html,
+      }, true);
+
+      return { success };
+    } catch (error) {
+      console.error('Error sending commission earned email:', error);
+      return { success: false, error: 'Failed to send commission email' };
+    }
+  }
+
+  /**
+   * Send payout processed notification
+   */
+  async sendPayoutProcessedEmail(
+    email: string,
+    data: { fullName: string; amount: number; payoutMethod: string; transactionReference: string }
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const formattedAmount = `GHS ${data.amount.toFixed(2)}`;
+      const methodDisplay = data.payoutMethod === 'paystack' ? 'Paystack'
+        : data.payoutMethod === 'bank_transfer' ? 'Bank Transfer'
+        : data.payoutMethod === 'mobile_money' ? 'Mobile Money'
+        : data.payoutMethod;
+
+      const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; border: 1px solid #ddd; border-radius: 8px; overflow: hidden; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+            .content { padding: 30px; }
+            .payout-box { background: #f5f5f5; padding: 20px; border-radius: 5px; margin: 20px 0; }
+            .payout-row { display: flex; justify-content: space-between; margin: 10px 0; padding: 10px 0; border-bottom: 1px solid #ddd; }
+            .payout-row:last-child { border-bottom: none; }
+            .payout-label { font-weight: bold; color: #666; }
+            .payout-value { color: #333; }
+            .footer { background: #f5f5f5; padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #ddd; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>Payout Processed Successfully! 🎉</h1>
+            </div>
+            <div class="content">
+              <p>Hi ${data.fullName},</p>
+              
+              <p>Your payout request has been processed successfully. Here are the details:</p>
+              
+              <div class="payout-box">
+                <div class="payout-row">
+                  <span class="payout-label">Amount:</span>
+                  <span class="payout-value">${formattedAmount}</span>
+                </div>
+                <div class="payout-row">
+                  <span class="payout-label">Method:</span>
+                  <span class="payout-value">${methodDisplay}</span>
+                </div>
+                <div class="payout-row">
+                  <span class="payout-label">Reference:</span>
+                  <span class="payout-value">${data.transactionReference}</span>
+                </div>
+              </div>
+              
+              <p>The funds should arrive in your ${methodDisplay} account within 1-3 business days depending on your payment method and bank processing times.</p>
+              
+              <p>If you have any questions about this payout, please contact our support team at ventechgadgets@gmail.com</p>
+              
+              <p>Thank you for being a valued VENTECH affiliate partner!</p>
+              
+              <p>Best regards,<br><strong>VENTECH Team</strong></p>
+            </div>
+            <div class="footer">
+              <p>VENTECH Gadgets - Your Trusted Tech Partner</p>
+              <p>Email: ventechgadgets@gmail.com | Phone: +233 55 134 4310</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+
+      const success = await this.sendEmail({
+        to: email,
+        subject: `Payout Processed: ${formattedAmount} ✅`,
+        html,
+      }, true);
+
+      return { success };
+    } catch (error) {
+      console.error('Error sending payout processed email:', error);
+      return { success: false, error: 'Failed to send payout email' };
+    }
+  }
+}
+
 export default new EnhancedEmailService();
 export { sendInvestmentEmail } from './email.service';

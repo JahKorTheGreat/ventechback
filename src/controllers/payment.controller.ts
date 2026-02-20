@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import axios from 'axios';
 import { supabaseAdmin } from '../utils/supabaseClient';
+import affiliateService from '../services/affiliate.service';
 
 export class PaymentController {
   // Initialize Paystack transaction (from backend as per Paystack best practices)
@@ -245,6 +246,38 @@ export class PaymentController {
                 console.error('Error updating order payment status:', updateOrderError);
               } else {
                 console.log(`✅ Updated order ${orderIdToUpdate} payment_status to 'paid' with method '${paymentMethod}'`);
+
+                // ✅ Track affiliate commission earnings (when payment is confirmed)
+                // Update commission status from 'pending' to 'earned' with earned_at timestamp
+                try {
+                  const transactionId = transactionData.id || 'unknown';
+                  const commissions = await affiliateService.confirmCommissionEarned(
+                    orderIdToUpdate,
+                    transactionId
+                  );
+
+                  if (commissions && commissions.length > 0) {
+                    console.log('✅ Affiliate commission(s) marked as earned:', {
+                      count: commissions.length,
+                      commissions: commissions.map((c: any) => ({
+                        id: c.id,
+                        amount: c.commission_amount,
+                        affiliate_id: c.affiliate_id,
+                      })),
+                    });
+
+                    // TODO: Send commission earned email to affiliate(s)
+                    // This could be done in a separate process/cron job
+                  } else {
+                    console.log('ℹ️ No affiliate commissions to confirm for order:', orderIdToUpdate);
+                  }
+                } catch (affiliateError) {
+                  // Log error but don't fail payment confirmation
+                  console.error('⚠️ Error confirming affiliate commission:', {
+                    error: affiliateError instanceof Error ? affiliateError.message : 'Unknown error',
+                    order_id: orderIdToUpdate,
+                  });
+                }
               }
             } catch (updateError) {
               console.error('Error updating order payment status:', updateError);
