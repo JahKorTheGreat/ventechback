@@ -61,5 +61,36 @@ export const isAdmin = (req: AuthRequest, res: Response, next: NextFunction) => 
   next();
 };
 
+// Add to existing src/middleware/auth.middleware.ts for Affiliate verification
 
+export const requireAffiliate = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  if (!req.user) {
+    return errorResponse(res, 'Unauthorized', 401);
+  }
+
+  try {
+    const { data: affiliate, error } = await supabaseAdmin
+      .from('affiliates')
+      .select('status')
+      .eq('user_id', req.user.id)
+      .single();
+
+    if (error || !affiliate) {
+      return errorResponse(res, 'Affiliate account not found', 404);
+    }
+
+    if (affiliate.status !== 'active') {
+      return errorResponse(
+        res,
+        `Affiliate account is ${affiliate.status}. Please contact support.`,
+        403
+      );
+    }
+
+    next();
+  } catch (error) {
+    console.error('Affiliate verification error:', error);
+    return errorResponse(res, 'Failed to verify affiliate status', 500);
+  }
+};
 

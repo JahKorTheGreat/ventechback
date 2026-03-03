@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { supabaseAdmin } from '../utils/supabaseClient';
 import enhancedEmailService from '../services/enhanced-email.service';
 import pdfService from '../services/pdf.service';
+import { affiliateService } from '../services/affiliate.service';
 
 export class OrderController {
   // Get all orders (admin)
@@ -1391,6 +1392,28 @@ export class OrderController {
         message: 'Order created successfully',
         data: orderData,
       });
+
+      if (newOrder && newOrder.data) {
+        const affiliateRef = req.cookies?.affiliate_ref;
+        if (affiliateRef) {
+          try {
+            // Calculate order subtotal (if you need to exclude shipping/tax)
+            const orderAmount = newOrder.data.subtotal || newOrder.data.total_amount;
+            await affiliateService.attributeEarningsForOrder(
+              newOrder.data.id,
+              req.user.id,
+              affiliateRef,
+              orderAmount
+            );
+          } catch (error) {
+            console.error('Affiliate attribution failed:', error);
+            // Don't fail the order if attribution fails
+          }
+        }
+      }
+
+      return successResponse(res, newOrder.data, 'Order created successfully', 201);
+      
     } catch (error: any) {
       console.error('❌ Error creating order:', {
         error,

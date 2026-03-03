@@ -17,6 +17,7 @@ import affiliateRoutes from './routes/affiliate.routes';
 import couponRoutes from './routes/coupon.routes';
 import { errorHandler, notFound } from './middleware/error.middleware';
 import { publicRateLimiter } from './middleware/rateLimit.middleware';
+import { trackAffiliateClick } from './middleware/affiliateTracking.middleware';
 
 const app: Application = express();
 
@@ -56,6 +57,7 @@ app.get('/health', (req: Request, res: Response) => {
 
 // API Routes with rate limiting
 // Note: Individual routes have specific rate limiters applied
+app.use(trackAffiliateClick);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/payments', paymentRoutes);
@@ -65,6 +67,7 @@ app.use('/api/investment', publicRateLimiter, investmentRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/bulk-orders', bulkOrderRoutes);
+
 app.use('/api/affiliate', publicRateLimiter, affiliateRoutes);
 app.use('/api/coupons', publicRateLimiter, couponRoutes);
 
