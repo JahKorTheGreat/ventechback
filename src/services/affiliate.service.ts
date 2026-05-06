@@ -144,7 +144,30 @@ export class AffiliateService {
   /**
    * Get chart data for last 12 months
    */
-  async getChartData(affiliateId: string): Promise<ChartData> {
+  async getChartData(affiliateId: string, showPlaceholder: boolean = false): Promise<ChartData> {
+    const affiliate = await this.getAffiliateById(affiliateId);
+    if (!affiliate) {
+      throw new Error('Affiliate not found');
+    }
+
+    // Check if affiliate has any data
+    const hasAnyData = affiliate.totalEarnings > 0 || affiliate.totalClicks > 0;
+
+    // If no data, return empty arrays with isEmpty flag
+    if (!hasAnyData) {
+      const labels = this.getMonthLabels();
+      return {
+        labels,
+        earnings: new Array(12).fill(0),
+        clicks: new Array(12).fill(0),
+        conversions: new Array(12).fill(0),
+        isEmpty: true,
+        dataType: 'empty',
+        message: 'No earnings recorded yet. Create referral links and share them to start earning!',
+      };
+    }
+
+    // Generate real data
     const labels: string[] = [];
     const earnings: number[] = [];
     const clicks: number[] = [];
@@ -174,7 +197,7 @@ export class AffiliateService {
       const { data: clickData } = await supabaseAdmin
         .from('click_logs')
         .select('id')
-        .eq('referral_code', (await this.getAffiliateById(affiliateId))?.referralCode || '')
+        .eq('referral_code', affiliate.referralCode)
         .gte('created_at', monthStart.toISOString())
         .lte('created_at', monthEnd.toISOString());
 
@@ -184,7 +207,7 @@ export class AffiliateService {
       const { data: conversionData } = await supabaseAdmin
         .from('click_logs')
         .select('id')
-        .eq('referral_code', (await this.getAffiliateById(affiliateId))?.referralCode || '')
+        .eq('referral_code', affiliate.referralCode)
         .eq('converted', true)
         .gte('created_at', monthStart.toISOString())
         .lte('created_at', monthEnd.toISOString());
@@ -192,7 +215,36 @@ export class AffiliateService {
       conversions.push(conversionData?.length || 0);
     }
 
-    return { labels, earnings, clicks, conversions };
+    return {
+      labels,
+      earnings,
+      clicks,
+      conversions,
+      isEmpty: false,
+      dataType: 'real',
+    };
+  }
+
+  /**
+   * DEPRECATED: Placeholder chart data removed
+   * All chart data is now real database data only in production
+   * This method is kept for reference but disabled to prevent accidental use
+   */
+  private generatePlaceholderChartData(): ChartData {
+    throw new Error('Placeholder chart data is disabled in production. Only real database data is returned.');
+  }
+
+  /**
+   * Get month labels for the last 12 months
+   */
+  private getMonthLabels(): string[] {
+    const labels: string[] = [];
+    for (let i = 11; i >= 0; i--) {
+      const date = new Date();
+      date.setMonth(date.getMonth() - i);
+      labels.push(date.toLocaleString('default', { month: 'short' }));
+    }
+    return labels;
   }
 
   /**
@@ -317,20 +369,201 @@ export class AffiliateService {
   }
 
   /**
-   * Get referral links for affiliate
+   * Get monthly earnings breakdown
+   */
+  async getMonthlyEarnings(
+    affiliateId: string,
+    year?: number
+  ): Promise<Array<{ month: string; earnings: number; commissions: number }>> {
+    const targetYear = year || new Date().getFullYear();
+    const result: Array<{ month: string; earnings: number; commissions: number }> = [];
+
+    // Get affiliate tier for real commission rate lookup
+    const affiliate = await this.getAffiliateById(affiliateId);
+    if (!affiliate) {
+      throw new Error('Affiliate not found');
+    }
+
+    const affiliateTier = affiliate.tier as keyof CommissionRates;
+    const commissionRate = this.COMMISSION_RATES[affiliateTier] || 0.08;
+    const commissionPercentage = commissionRate * 100; // Convert to percentage (8%, 10%, 12%)
+
+    for (let i = 1; i <= 12; i++) {
+      const monthStart = new Date(targetYear, i - 1, 1);
+      const monthEnd = new Date(targetYear, i, 0);
+
+      const { data: earningsData } = await supabaseAdmin
+        .from('earnings')
+        .select('amount')
+        .eq('affiliate_id', affiliateId)
+        .in('status', ['approved', 'paid'])
+        .gte('created_at', monthStart.toISOString())
+        .lte('created_at', monthEnd.toISOString());
+
+      const earnings = earningsData?.reduce((sum, e) => sum + (e.amount || 0), 0) || 0;
+      const monthName = monthStart.toLocaleString('default', { month: 'long' });
+
+      result.push({
+        month: monthName,
+        earnings: parseFloat(earnings.toFixed(2)),
+        commissions: parseFloat(commissionPercentage.toFixed(2)), // Real commission rate from affiliate tier
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Get earnings breakdown by product tier/category
+   */
+  async getEarningsByTier(affiliateId: string): Promise<
+    Array<{
+      tier: string;
+      totalEarnings: number;
+      totalOrders: number;
+      rate: number;
+    }>
+  > {
+    const tiers = ['starter', 'pro', 'elite'];
+    const result = [];
+
+    for (const tier of tiers) {
+      const rate = this.COMMISSION_RATES[tier as keyof CommissionRates] * 100;
+
+      const { data: earnings, count } = await supabaseAdmin
+        .from('earnings')
+        .select('amount', { count: 'exact' })
+        .eq('affiliate_id', affiliateId)
+        .in('status', ['approved', 'paid']);
+
+      // Filter by tier (in real implementation, this would be based on product tier)
+      // For now, we'll calculate total earnings
+      const totalEarnings = earnings?.reduce((sum, e) => sum + (e.amount || 0), 0) || 0;
+
+      result.push({
+        tier: tier.charAt(0).toUpperCase() + tier.slice(1),
+        totalEarnings: parseFloat(totalEarnings.toFixed(2)),
+        totalOrders: count || 0,
+        rate,
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Export earnings to CSV format
+   */
+  async exportEarnings(
+    affiliateId: string,
+    format: 'csv' | 'json' = 'csv',
+    filters?: {
+      status?: string;
+      startDate?: string;
+      endDate?: string;
+    }
+  ): Promise<string> {
+    let query = supabaseAdmin.from('earnings').select('*').eq('affiliate_id', affiliateId);
+
+    if (filters?.status && filters.status !== 'all') {
+      query = query.eq('status', filters.status);
+    }
+
+    if (filters?.startDate) {
+      query = query.gte('created_at', filters.startDate);
+    }
+
+    if (filters?.endDate) {
+      query = query.lte('created_at', filters.endDate);
+    }
+
+    const { data: earnings, error } = await query.order('created_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to export earnings: ${error.message}`);
+    }
+
+    if (!earnings || earnings.length === 0) {
+      throw new Error('No earnings found to export');
+    }
+
+    if (format === 'csv') {
+      return this.generateCSV(earnings);
+    } else {
+      return JSON.stringify(earnings, null, 2);
+    }
+  }
+
+  /**
+   * Helper: Generate CSV from earnings data
+   */
+  private generateCSV(earnings: any[]): string {
+    const headers = ['Order ID', 'Product Name', 'Amount', 'Status', 'Date'];
+    const rows = earnings.map(e => [
+      e.order_id,
+      e.product_name,
+      e.amount.toFixed(2),
+      e.status,
+      new Date(e.created_at).toLocaleDateString(),
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => `"${cell}"`).join(',')),
+    ].join('\n');
+
+    return csvContent;
+  }
+
+  /**
+   * Get referral links for affiliate with real-time stats from click_logs
    */
   async getReferralLinks(affiliateId: string): Promise<ReferralLink[]> {
-    const { data, error } = await supabaseAdmin
+    const { data: links, error } = await supabaseAdmin
       .from('referral_links')
       .select('*')
       .eq('affiliate_id', affiliateId)
       .order('created_at', { ascending: false });
 
-    if (error || !data) {
+    if (error || !links) {
       return [];
     }
 
-    return data.map(l => this.mapReferralLink(l));
+    // Enhance each link with real-time stats from click_logs
+    const enrichedLinks = await Promise.all(
+      links.map(async (link) => {
+        // Get click count for this referral code
+        const { count: clickCount } = await supabaseAdmin
+          .from('click_logs')
+          .select('id', { count: 'exact' })
+          .eq('referral_code', link.referral_code);
+
+        // Get conversion count for this referral code
+        const { count: conversionCount } = await supabaseAdmin
+          .from('click_logs')
+          .select('id', { count: 'exact' })
+          .eq('referral_code', link.referral_code)
+          .eq('converted', true);
+
+        // Get earnings for this affiliate
+        const { data: earningsData } = await supabaseAdmin
+          .from('earnings')
+          .select('amount')
+          .eq('affiliate_id', affiliateId)
+          .in('status', ['approved', 'paid']);
+
+        const totalEarnings = earningsData?.reduce((sum, e) => sum + (e.amount || 0), 0) || 0;
+
+        return {
+          ...link,
+          clicks: clickCount || 0,
+          conversions: conversionCount || 0,
+          earnings: totalEarnings,
+        };
+      })
+    );
+
+    return enrichedLinks.map(l => this.mapReferralLink(l));
   }
 
   /**
@@ -389,6 +622,115 @@ export class AffiliateService {
   }
 
   /**
+   * Get stats for a specific referral link
+   */
+  async getLinkStats(
+    affiliateId: string,
+    linkId: string
+  ): Promise<{
+    linkId: string;
+    clicks: number;
+    conversions: number;
+    earnings: number;
+    conversionRate: string;
+  }> {
+    // Verify link exists and belongs to affiliate
+    const { data: link } = await supabaseAdmin
+      .from('referral_links')
+      .select('referral_code')
+      .eq('id', linkId)
+      .eq('affiliate_id', affiliateId)
+      .single();
+
+    if (!link) {
+      throw new Error('Referral link not found');
+    }
+
+    // Get click count for this referral code
+    const { count: clickCount } = await supabaseAdmin
+      .from('click_logs')
+      .select('id', { count: 'exact' })
+      .eq('referral_code', link.referral_code);
+
+    // Get conversion count for this referral code
+    const { count: conversionCount } = await supabaseAdmin
+      .from('click_logs')
+      .select('id', { count: 'exact' })
+      .eq('referral_code', link.referral_code)
+      .eq('converted', true);
+
+    // Get earnings for this affiliate
+    const { data: earningsData } = await supabaseAdmin
+      .from('earnings')
+      .select('amount')
+      .eq('affiliate_id', affiliateId)
+      .in('status', ['approved', 'paid']);
+
+    const totalEarnings = earningsData?.reduce((sum, e) => sum + (e.amount || 0), 0) || 0;
+
+    const clicks = clickCount || 0;
+    const conversions = conversionCount || 0;
+    const conversionRate =
+      clicks > 0 ? ((conversions / clicks) * 100).toFixed(2) : '0';
+
+    return {
+      linkId,
+      clicks,
+      conversions,
+      earnings: totalEarnings,
+      conversionRate,
+    };
+  }
+
+  /**
+   * Update referral link details
+   */
+  async updateReferralLink(
+    affiliateId: string,
+    linkId: string,
+    updates: {
+      name?: string;
+      source?: string;
+      status?: 'active' | 'inactive';
+    }
+  ): Promise<ReferralLink> {
+    // Verify link exists and belongs to affiliate
+    const { data: link } = await supabaseAdmin
+      .from('referral_links')
+      .select('*')
+      .eq('id', linkId)
+      .eq('affiliate_id', affiliateId)
+      .single();
+
+    if (!link) {
+      throw new Error('Referral link not found');
+    }
+
+    // Build update object (only include provided fields)
+    const updateData: Record<string, any> = {};
+    if (updates.name !== undefined) updateData.name = updates.name;
+    if (updates.source !== undefined) updateData.source = updates.source;
+    if (updates.status !== undefined) updateData.status = updates.status;
+
+    if (Object.keys(updateData).length === 0) {
+      throw new Error('No fields to update');
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('referral_links')
+      .update(updateData)
+      .eq('id', linkId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update referral link: ${error.message}`);
+    }
+
+    return this.mapReferralLink(data);
+  }
+
+  /**
    * Get payment methods for affiliate
    */
   async getPaymentMethods(affiliateId: string): Promise<PaymentMethod[]> {
@@ -441,6 +783,19 @@ export class AffiliateService {
    * Delete payment method
    */
   async deletePaymentMethod(affiliateId: string, methodId: string): Promise<void> {
+    // Check if this is the default method
+    const { data: method } = await supabaseAdmin
+      .from('payment_methods')
+      .select('is_default')
+      .eq('id', methodId)
+      .eq('affiliate_id', affiliateId)
+      .single();
+
+    if (!method) {
+      throw new Error('Payment method not found');
+    }
+
+    // Delete the method
     const { error } = await supabaseAdmin
       .from('payment_methods')
       .delete()
@@ -449,6 +804,23 @@ export class AffiliateService {
 
     if (error) {
       throw new Error(`Failed to delete payment method: ${error.message}`);
+    }
+
+    // If this was the default, set another as default
+    if (method.is_default) {
+      const { data: nextMethod } = await supabaseAdmin
+        .from('payment_methods')
+        .select('id')
+        .eq('affiliate_id', affiliateId)
+        .limit(1)
+        .single();
+
+      if (nextMethod) {
+        await supabaseAdmin
+          .from('payment_methods')
+          .update({ is_default: true })
+          .eq('id', nextMethod.id);
+      }
     }
   }
 
@@ -524,6 +896,128 @@ export class AffiliateService {
   }
 
   /**
+   * Get payout summary (count by status)
+   */
+  async getPayoutsSummary(
+    affiliateId: string
+  ): Promise<{
+    totalRequested: number;
+    totalPaid: number;
+    pendingPayouts: number;
+    nextPayoutDate: string | null;
+    minimumPayout: number;
+  }> {
+    // Count and sum payouts by status
+    const { data: allPayouts } = await supabaseAdmin
+      .from('payouts')
+      .select('amount, status')
+      .eq('affiliate_id', affiliateId);
+
+    let totalRequested = 0;
+    let totalPaid = 0;
+    let pendingCount = 0;
+
+    (allPayouts || []).forEach((payout) => {
+      if (payout.status === 'completed') {
+        totalPaid += payout.amount;
+      }
+      if (payout.status === 'pending' || payout.status === 'processing') {
+        totalRequested += payout.amount;
+        if (payout.status === 'pending') pendingCount++;
+      }
+    });
+
+    // Calculate next payout date (assuming payouts are processed every Monday)
+    const today = new Date();
+    const nextMonday = new Date(today);
+    nextMonday.setDate(today.getDate() + ((1 + 7 - today.getDay()) % 7));
+    if (nextMonday.getTime() === today.getTime()) {
+      nextMonday.setDate(nextMonday.getDate() + 7);
+    }
+
+    return {
+      totalRequested,
+      totalPaid,
+      pendingPayouts: pendingCount,
+      nextPayoutDate: nextMonday.toISOString().split('T')[0],
+      minimumPayout: this.MIN_PAYOUT,
+    };
+  }
+
+  /**
+   * Cancel a pending payout
+   */
+  async cancelPayout(affiliateId: string, payoutId: string): Promise<Payout> {
+    // Verify payout exists and belongs to affiliate
+    const { data: payout } = await supabaseAdmin
+      .from('payouts')
+      .select('*')
+      .eq('id', payoutId)
+      .eq('affiliate_id', affiliateId)
+      .single();
+
+    if (!payout) {
+      throw new Error('Payout not found');
+    }
+
+    // Only allow cancelling pending payouts
+    if (payout.status !== 'pending') {
+      throw new Error(`Cannot cancel payout with status '${payout.status}'`);
+    }
+
+    // Update status to cancelled
+    const { data: updated, error } = await supabaseAdmin
+      .from('payouts')
+      .update({ status: 'cancelled' })
+      .eq('id', payoutId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to cancel payout: ${error.message}`);
+    }
+
+    return this.mapPayout(updated);
+  }
+
+  /**
+   * Set default payment method
+   */
+  async setDefaultPaymentMethod(affiliateId: string, methodId: string): Promise<PaymentMethod> {
+    // Verify payment method exists and belongs to affiliate
+    const { data: method } = await supabaseAdmin
+      .from('payment_methods')
+      .select('*')
+      .eq('id', methodId)
+      .eq('affiliate_id', affiliateId)
+      .single();
+
+    if (!method) {
+      throw new Error('Payment method not found');
+    }
+
+    // Update all methods to is_default=false for this affiliate
+    await supabaseAdmin
+      .from('payment_methods')
+      .update({ is_default: false })
+      .eq('affiliate_id', affiliateId);
+
+    // Set this method as default
+    const { data: updated, error } = await supabaseAdmin
+      .from('payment_methods')
+      .update({ is_default: true })
+      .eq('id', methodId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to set default payment method: ${error.message}`);
+    }
+
+    return this.mapPaymentMethod(updated);
+  }
+
+  /**
    * Track affiliate click
    */
   async trackClick(referralCode: string, ip: string, userAgent: string, source?: string): Promise<void> {
@@ -584,7 +1078,7 @@ export class AffiliateService {
       if (!orderItems || orderItems.length === 0) return;
 
       const productId = orderItems[0].product_id;
-      const productName = orderItems[0].products?.name || 'Product';
+      const productName = orderItems[0].products?.[0]?.name || 'Product';
 
       await this.createEarning(affiliate.id, orderId, productId, productName, orderAmount);
 
@@ -687,6 +1181,451 @@ export class AffiliateService {
       processedAt: data.processed_at,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+    };
+  }
+
+  /**
+   * Get campaigns available to affiliates
+   */
+  async getCampaigns(affiliateId: string, status?: string): Promise<any[]> {
+    let query = supabaseAdmin.from('campaigns').select('*');
+
+    if (status && status !== 'all') {
+      query = query.eq('status', status);
+    }
+
+    const { data, error } = await query.order('start_date', { ascending: false });
+
+    if (error || !data) {
+      return [];
+    }
+
+    return data.map(c => ({
+      id: c.id,
+      name: c.name,
+      description: c.description,
+      status: c.status,
+      startDate: c.start_date,
+      endDate: c.end_date,
+      commissionBonus: c.commission_bonus,
+      imageUrl: c.image_url,
+      products: c.products || [],
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+    }));
+  }
+
+  /**
+   * Get campaign details
+   */
+  async getCampaign(campaignId: string): Promise<any> {
+    const { data, error } = await supabaseAdmin
+      .from('campaigns')
+      .select('*')
+      .eq('id', campaignId)
+      .single();
+
+    if (error || !data) {
+      throw new Error('Campaign not found');
+    }
+
+    return {
+      id: data.id,
+      name: data.name,
+      description: data.description,
+      status: data.status,
+      startDate: data.start_date,
+      endDate: data.end_date,
+      commissionBonus: data.commission_bonus,
+      imageUrl: data.image_url,
+      products: data.products || [],
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  /**
+   * Get campaign statistics
+   */
+  async getCampaignStats(affiliateId: string, campaignId: string): Promise<any> {
+    // Get clicks from campaign
+    const { count: clicks } = await supabaseAdmin
+      .from('click_logs')
+      .select('id', { count: 'exact' })
+      .eq('affiliate_id', affiliateId)
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+
+    // Get conversions from campaign
+    const { count: conversions } = await supabaseAdmin
+      .from('click_logs')
+      .select('id', { count: 'exact' })
+      .eq('affiliate_id', affiliateId)
+      .eq('converted', true)
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+
+    // Get earnings from campaign
+    const { data: earningsData } = await supabaseAdmin
+      .from('earnings')
+      .select('amount')
+      .eq('affiliate_id', affiliateId)
+      .in('status', ['approved', 'paid'])
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString());
+
+    const earnings = earningsData?.reduce((sum, e) => sum + (e.amount || 0), 0) || 0;
+
+    return {
+      campaignId,
+      clicks: clicks || 0,
+      conversions: conversions || 0,
+      earnings: parseFloat(earnings.toFixed(2)),
+      products: [],
+    };
+  }
+
+  /**
+   * Get notifications for user
+   */
+  async getNotifications(userId: string, limit: number = 10): Promise<any[]> {
+    const { data, error } = await supabaseAdmin
+      .from('notifications')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error || !data) {
+      return [];
+    }
+
+    return data.map(n => ({
+      id: n.id,
+      userId: n.user_id,
+      title: n.title,
+      message: n.message,
+      type: n.type,
+      read: n.read,
+      createdAt: n.created_at,
+      updatedAt: n.updated_at,
+    }));
+  }
+
+  /**
+   * Get unread notification count
+   */
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    const { count, error } = await supabaseAdmin
+      .from('notifications')
+      .select('id', { count: 'exact' })
+      .eq('user_id', userId)
+      .eq('read', false);
+
+    if (error) {
+      return 0;
+    }
+
+    return count || 0;
+  }
+
+  /**
+   * Mark notification as read
+   */
+  async markNotificationAsRead(userId: string, notificationId: string): Promise<any> {
+    const { data, error } = await supabaseAdmin
+      .from('notifications')
+      .update({ read: true })
+      .eq('id', notificationId)
+      .eq('user_id', userId)
+      .select()
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to mark notification as read: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      userId: data.user_id,
+      title: data.title,
+      message: data.message,
+      type: data.type,
+      read: data.read,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  /**
+   * Get affiliate settings
+   */
+  async getAffiliateSettings(affiliateId: string): Promise<any> {
+    const { data, error } = await supabaseAdmin
+      .from('affiliate_settings')
+      .select('*')
+      .eq('affiliate_id', affiliateId)
+      .single();
+
+    if (error) {
+      // Return default settings if none exist
+      return {
+        id: null,
+        affiliateId,
+        emailNotifications: true,
+        monthlyReports: true,
+        autoWithdrawal: false,
+        autoWithdrawalAmount: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    return {
+      id: data.id,
+      affiliateId: data.affiliate_id,
+      emailNotifications: data.email_notifications,
+      monthlyReports: data.monthly_reports,
+      autoWithdrawal: data.auto_withdrawal,
+      autoWithdrawalAmount: data.auto_withdrawal_amount,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  /**
+   * Update affiliate settings
+   */
+  async updateAffiliateSettings(
+    affiliateId: string,
+    updates: {
+      emailNotifications?: boolean;
+      monthlyReports?: boolean;
+      autoWithdrawal?: boolean;
+      autoWithdrawalAmount?: number;
+    }
+  ): Promise<any> {
+    // Try to get existing settings first
+    const { data: existing } = await supabaseAdmin
+      .from('affiliate_settings')
+      .select('id')
+      .eq('affiliate_id', affiliateId)
+      .single();
+
+    let data, error;
+
+    if (existing) {
+      // Update existing
+      const updateData: Record<string, any> = {
+        affiliate_id: affiliateId,
+      };
+      if (updates.emailNotifications !== undefined) updateData.email_notifications = updates.emailNotifications;
+      if (updates.monthlyReports !== undefined) updateData.monthly_reports = updates.monthlyReports;
+      if (updates.autoWithdrawal !== undefined) updateData.auto_withdrawal = updates.autoWithdrawal;
+      if (updates.autoWithdrawalAmount !== undefined) updateData.auto_withdrawal_amount = updates.autoWithdrawalAmount;
+
+      const result = await supabaseAdmin
+        .from('affiliate_settings')
+        .update(updateData)
+        .eq('affiliate_id', affiliateId)
+        .select()
+        .single();
+
+      data = result.data;
+      error = result.error;
+    } else {
+      // Create new
+      const result = await supabaseAdmin
+        .from('affiliate_settings')
+        .insert({
+          affiliate_id: affiliateId,
+          email_notifications: updates.emailNotifications ?? true,
+          monthly_reports: updates.monthlyReports ?? true,
+          auto_withdrawal: updates.autoWithdrawal ?? false,
+          auto_withdrawal_amount: updates.autoWithdrawalAmount ?? null,
+        })
+        .select()
+        .single();
+
+      data = result.data;
+      error = result.error;
+    }
+
+    if (error) {
+      throw new Error(`Failed to update settings: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      affiliateId: data.affiliate_id,
+      emailNotifications: data.email_notifications,
+      monthlyReports: data.monthly_reports,
+      autoWithdrawal: data.auto_withdrawal,
+      autoWithdrawalAmount: data.auto_withdrawal_amount,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  /**
+   * Get user profile
+   */
+  async getUserProfile(userId: string): Promise<any> {
+    const { data, error } = await supabaseAdmin
+      .from('user_profiles')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !data) {
+      // Return minimal profile if not found
+      return {
+        id: null,
+        userId,
+        firstName: '',
+        lastName: '',
+        email: '',
+        phone: null,
+        avatar: null,
+        bio: null,
+        country: null,
+        city: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    return {
+      id: data.id,
+      userId: data.user_id,
+      firstName: data.first_name,
+      lastName: data.last_name,
+      email: data.email,
+      phone: data.phone,
+      avatar: data.avatar,
+      bio: data.bio,
+      country: data.country,
+      city: data.city,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  /**
+   * Update user profile
+   */
+  async updateUserProfile(
+    userId: string,
+    updates: {
+      firstName?: string;
+      lastName?: string;
+      phone?: string;
+      avatar?: string;
+      bio?: string;
+      country?: string;
+      city?: string;
+    }
+  ): Promise<any> {
+    // Check if profile exists
+    const { data: existing } = await supabaseAdmin
+      .from('user_profiles')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    let data, error;
+
+    if (existing) {
+      // Update existing
+      const updateData: Record<string, any> = {};
+      if (updates.firstName !== undefined) updateData.first_name = updates.firstName;
+      if (updates.lastName !== undefined) updateData.last_name = updates.lastName;
+      if (updates.phone !== undefined) updateData.phone = updates.phone;
+      if (updates.avatar !== undefined) updateData.avatar = updates.avatar;
+      if (updates.bio !== undefined) updateData.bio = updates.bio;
+      if (updates.country !== undefined) updateData.country = updates.country;
+      if (updates.city !== undefined) updateData.city = updates.city;
+
+      const result = await supabaseAdmin
+        .from('user_profiles')
+        .update(updateData)
+        .eq('user_id', userId)
+        .select()
+        .single();
+
+      data = result.data;
+      error = result.error;
+    } else {
+      // Create new profile
+      const result = await supabaseAdmin
+        .from('user_profiles')
+        .insert({
+          user_id: userId,
+          first_name: updates.firstName || '',
+          last_name: updates.lastName || '',
+          email: '', // To be filled from auth
+          phone: updates.phone || null,
+          avatar: updates.avatar || null,
+          bio: updates.bio || null,
+          country: updates.country || null,
+          city: updates.city || null,
+        })
+        .select()
+        .single();
+
+      data = result.data;
+      error = result.error;
+    }
+
+    if (error) {
+      throw new Error(`Failed to update profile: ${error.message}`);
+    }
+
+    return {
+      id: data.id,
+      userId: data.user_id,
+      firstName: data.first_name,
+      lastName: data.last_name,
+      email: data.email,
+      phone: data.phone,
+      avatar: data.avatar,
+      bio: data.bio,
+      country: data.country,
+      city: data.city,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  /**
+   * Get user's affiliate tier
+   */
+  async getUserAffiliateTier(userId: string): Promise<any> {
+    const { data, error } = await supabaseAdmin
+      .from('affiliates')
+      .select('tier,status,total_earnings,total_clicks,total_conversions')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !data) {
+      return {
+        tier: null,
+        status: null,
+        benefits: [],
+        message: 'Affiliate account not found',
+      };
+    }
+
+    const tierBenefits: Record<string, string[]> = {
+      starter: ['8% commission', 'Dashboard access', 'Basic analytics'],
+      pro: ['10% commission', 'Dashboard access', 'Advanced analytics', 'Priority support'],
+      elite: ['12% commission', 'Dashboard access', 'Advanced analytics', 'Priority support', 'Dedicated manager'],
+    };
+
+    return {
+      tier: data.tier,
+      status: data.status,
+      earnings: data.total_earnings,
+      clicks: data.total_clicks,
+      conversions: data.total_conversions,
+      benefits: tierBenefits[data.tier] || [],
     };
   }
 }

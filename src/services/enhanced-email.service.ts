@@ -22,29 +22,30 @@ interface UserPreferences {
 }
 
 class EnhancedEmailService {
-  private resend: Resend;
-  private supportEmail: string;
-  private noreplyEmail: string;
+  private resend: Resend | null = null;
+  private supportEmail: string = '';
+  private noreplyEmail: string = '';
 
   constructor() {
     const resendApiKey = process.env.RESEND_API_KEY;
-    
+
+    // ✅ ALWAYS set defaults (prevents TS error)
+    this.supportEmail =
+      process.env.RESEND_SUPPORT_EMAIL ||
+      'VENTECH GADGETS <support@ventechgadgets.com>';
+
+    this.noreplyEmail =
+      process.env.RESEND_NOREPLY_EMAIL ||
+      'VENTECH GADGETS <noreply@ventechgadgets.com>';
+
     if (!resendApiKey) {
-      console.error('❌ RESEND_API_KEY is missing in .env file');
-      throw new Error('RESEND_API_KEY is required');
+      console.warn('⚠️ Email service disabled (no RESEND_API_KEY)');
+      return;
     }
 
     this.resend = new Resend(resendApiKey);
-    
-    // Support email for customer-facing emails (order confirmations, replies, etc.)
-    this.supportEmail = process.env.RESEND_SUPPORT_EMAIL || 'VENTECH GADGETS <support@ventechgadgets.com>';
-    
-    // No-reply email for automated notifications (system updates, password resets, etc.)
-    this.noreplyEmail = process.env.RESEND_NOREPLY_EMAIL || 'VENTECH GADGETS <noreply@ventechgadgets.com>';
-    
+
     console.log('✅ Resend email service initialized');
-    console.log(`   Support Email: ${this.supportEmail}`);
-    console.log(`   No-Reply Email: ${this.noreplyEmail}`);
   }
 
   // Get user communication preferences
@@ -107,6 +108,11 @@ class EnhancedEmailService {
 
       // Use support email for customer-facing emails, noreply for automated notifications
       const fromEmail = useSupportEmail ? this.supportEmail : this.noreplyEmail;
+      
+      if (!this.resend) {
+        console.warn('📭 Email skipped (service disabled)');
+        return false;
+      }
 
       const { data, error } = await this.resend.emails.send({
         from: fromEmail,

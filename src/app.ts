@@ -49,7 +49,6 @@ const corsOptions: CorsOptions = {
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
 // Health check
 app.get('/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'VENTECH API is running' });
@@ -73,6 +72,6 @@ app.use('/api/coupons', publicRateLimiter, couponRoutes);
 
 // Error handling
 app.use(notFound);
-app.use(errorHandler);
+app.use(errorHandler); 
 
 export default app;

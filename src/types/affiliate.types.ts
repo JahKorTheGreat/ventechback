@@ -99,6 +99,9 @@ export interface ChartData {
   earnings: number[];
   clicks: number[];
   conversions: number[];
+  isEmpty?: boolean;
+  dataType?: 'real' | 'empty' | 'placeholder';
+  message?: string;
 }
 
 export interface ProductWithCommission {
@@ -110,4 +113,55 @@ export interface ProductWithCommission {
   image?: string;
   commissionRate: number;
   commission: number;
+}
+
+export interface UserProfile {
+  id: string;
+  userId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string;
+  avatar?: string;
+  bio?: string;
+  country?: string;
+  city?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Campaign {
+  id: string;
+  name: string;
+  description?: string;
+  status: 'active' | 'inactive' | 'upcoming';
+  startDate: string;
+  endDate: string;
+  commissionBonus: number;
+  imageUrl?: string;
+  products?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Notification {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  read: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AffiliateSettings {
+  id: string;
+  affiliateId: string;
+  emailNotifications: boolean;
+  monthlyReports: boolean;
+  autoWithdrawal: boolean;
+  autoWithdrawalAmount?: number;
+  createdAt: string;
+  updatedAt: string;
 }

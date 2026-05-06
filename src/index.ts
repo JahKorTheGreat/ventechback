@@ -1,6 +1,7 @@
 // Load environment variables FIRST before any other imports
 import dotenv from 'dotenv';
  dotenv.config();
+ console.log('ENV CHECK:', process.env.SUPABASE_URL);
 
 // Now import app after env vars are loaded
 import app from './app';
